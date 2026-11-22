@@ -1,5 +1,6 @@
 package dev.lofrancolabs.pianopiano.data
 
+import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
 import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.NoteEvent
 
@@ -17,6 +18,7 @@ object BeginnerExercises {
             subtitle = "Quarter notes & rests on C4",
             focusTag = "Rhythm",
             defaultBpm = 72,
+            difficulty = BeginnerDifficulty.BEGINNER,
             notes = listOf(
                 NoteEvent(C4, 0f, 1f, 1),
                 NoteEvent(C4, 1f, 1f, 1),
@@ -34,6 +36,7 @@ object BeginnerExercises {
             subtitle = "Quarter, half & whole notes on C4–E4",
             focusTag = "Duration",
             defaultBpm = 72,
+            difficulty = BeginnerDifficulty.BEGINNER,
             notes = listOf(
                 NoteEvent(C4, 0f, 1f, 1),
                 NoteEvent(D4, 1f, 1f, 2),
@@ -50,6 +53,7 @@ object BeginnerExercises {
             subtitle = "Step up & down C4 to G4",
             focusTag = "C Position",
             defaultBpm = 80,
+            difficulty = BeginnerDifficulty.INTERMEDIATE,
             notes = listOf(
                 NoteEvent(C4, 0f, 1f, 1),
                 NoteEvent(D4, 1f, 1f, 2),
@@ -69,6 +73,7 @@ object BeginnerExercises {
             subtitle = "Broken C major triad with holds",
             focusTag = "Intervals",
             defaultBpm = 76,
+            difficulty = BeginnerDifficulty.INTERMEDIATE,
             notes = listOf(
                 NoteEvent(C4, 0f, 1f, 1),
                 NoteEvent(E4, 1f, 1f, 3),
@@ -87,6 +92,7 @@ object BeginnerExercises {
             subtitle = "8-bar beginner phrase with dotted holds",
             focusTag = "Melody",
             defaultBpm = 84,
+            difficulty = BeginnerDifficulty.ADVANCED,
             notes = listOf(
                 // Bar 1
                 NoteEvent(E4, 0f, 1f, 3),

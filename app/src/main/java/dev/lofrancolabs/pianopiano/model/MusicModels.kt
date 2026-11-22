@@ -4,16 +4,49 @@ import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
+enum class NoteNamingSystem(val displayName: String, val example: String) {
+    ENGLISH("English (C, D, E)", "C4, F#4, G4"),
+    SOLFEGE("Italian / Spanish (Do, Re, Mi)", "Do4, Fa#4, Sol4")
+}
+
+enum class BeginnerDifficulty(
+    val label: String,
+    val shortTag: String,
+    val description: String,
+    val baseXp: Int
+) {
+    BEGINNER("Beginner", "Random • Beginner", "C4–E4 • steady quarter & half notes", 25),
+    INTERMEDIATE("Intermediate", "Random • Intermediate", "C4–G4 5-finger position • mixed holds & rests", 35),
+    ADVANCED("Advanced Beginner", "Random • Adv. Beginner", "C4–C5 • gentle skips & dotted/eighth rhythms", 50)
+}
+
+enum class PracticeMode {
+    GUIDED,
+    RANDOM
+}
+
 object MidiUtils {
-    private val noteNames = arrayOf(
+    private val englishNames = arrayOf(
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    )
+    private val solfegeNames = arrayOf(
+        "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"
     )
     private val diatonicInOctave = intArrayOf(0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6)
 
-    fun midiToName(midi: Int): String {
+    fun midiToName(
+        midi: Int,
+        naming: NoteNamingSystem = NoteNamingSystem.ENGLISH,
+        includeOctave: Boolean = true
+    ): String {
         val semitone = ((midi % 12) + 12) % 12
+        val baseName = when (naming) {
+            NoteNamingSystem.ENGLISH -> englishNames[semitone]
+            NoteNamingSystem.SOLFEGE -> solfegeNames[semitone]
+        }
+        if (!includeOctave) return baseName
         val octave = Math.floorDiv(midi, 12) - 1
-        return "${noteNames[semitone]}$octave"
+        return "$baseName$octave"
     }
 
     fun midiToFrequency(midi: Int): Double = 440.0 * 2.0.pow((midi - 69) / 12.0)
@@ -58,6 +91,8 @@ data class Exercise(
     val focusTag: String,
     val defaultBpm: Int,
     val beatsPerBar: Int = 4,
+    val difficulty: BeginnerDifficulty = BeginnerDifficulty.BEGINNER,
+    val isGenerated: Boolean = false,
     val notes: List<NoteEvent>
 ) {
     val totalBeats: Float
@@ -119,10 +154,10 @@ data class NoteEvaluation(
     val isEvaluated: Boolean
         get() = timingVerdict != TimingVerdict.PENDING || pitchVerdict != PitchVerdict.PENDING
 
-    fun feedbackBadgeText(): String? {
+    fun feedbackBadgeText(naming: NoteNamingSystem = NoteNamingSystem.ENGLISH): String? {
         if (timingVerdict == TimingVerdict.MISSED) return "Missed"
         if (pitchVerdict == PitchVerdict.WRONG_KEY && playedMidi != null) {
-            return "Wrong: ${MidiUtils.midiToName(playedMidi)}"
+            return "Wrong: ${MidiUtils.midiToName(playedMidi, naming)}"
         }
         if (timingVerdict == TimingVerdict.TOO_SOON && onsetDeltaMs != null) {
             return "Too soon! (${onsetDeltaMs}ms)"

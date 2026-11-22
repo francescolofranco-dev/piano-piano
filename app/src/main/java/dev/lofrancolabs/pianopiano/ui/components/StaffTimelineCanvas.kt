@@ -31,6 +31,7 @@ import dev.lofrancolabs.pianopiano.model.DurationVerdict
 import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
+import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.SessionPhase
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
@@ -48,6 +49,7 @@ fun StaffTimelineCanvas(
     countInBeat: Int,
     beatFlashAlpha: Float,
     evaluations: List<NoteEvaluation>,
+    noteNaming: NoteNamingSystem,
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
@@ -351,7 +353,10 @@ fun StaffTimelineCanvas(
             }
 
             // Note pitch label & finger hint
-            val noteNameLayout = textMeasurer.measure(MidiUtils.midiToName(midi), noteLabelStyle)
+            val noteNameLayout = textMeasurer.measure(
+                MidiUtils.midiToName(midi, noteNaming),
+                noteLabelStyle
+            )
             drawText(
                 textLayoutResult = noteNameLayout,
                 topLeft = Offset(
@@ -371,7 +376,7 @@ fun StaffTimelineCanvas(
             }
 
             // Floating Feedback Badge
-            val badgeText = eval?.feedbackBadgeText()
+            val badgeText = eval?.feedbackBadgeText(noteNaming)
             if (eval != null && badgeText != null) {
                 val badgeBg = when {
                     eval.timingVerdict == TimingVerdict.MISSED ||

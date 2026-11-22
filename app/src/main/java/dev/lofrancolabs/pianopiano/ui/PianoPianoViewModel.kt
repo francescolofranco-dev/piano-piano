@@ -7,11 +7,20 @@ import androidx.lifecycle.viewModelScope
 import dev.lofrancolabs.pianopiano.audio.AudioCaptureEngine
 import dev.lofrancolabs.pianopiano.audio.PianoSynthesizer
 import dev.lofrancolabs.pianopiano.data.BeginnerExercises
+import dev.lofrancolabs.pianopiano.data.PreferencesRepository
+import dev.lofrancolabs.pianopiano.domain.ExerciseGenerator
 import dev.lofrancolabs.pianopiano.domain.ExerciseJudge
+import dev.lofrancolabs.pianopiano.domain.PlayerProgress
+import dev.lofrancolabs.pianopiano.domain.ProgressTracker
+import dev.lofrancolabs.pianopiano.domain.XpReward
+import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
 import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.ExerciseSummary
 import dev.lofrancolabs.pianopiano.model.InputSource
+import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
+import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
+import dev.lofrancolabs.pianopiano.model.PracticeMode
 import dev.lofrancolabs.pianopiano.model.SessionPhase
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,6 +38,11 @@ data class PianoPianoUiState(
     val selectedExercise: Exercise = BeginnerExercises.all.first(),
     val bpm: Int = BeginnerExercises.all.first().defaultBpm,
     val inputSource: InputSource = InputSource.MICROPHONE,
+    val noteNaming: NoteNamingSystem = NoteNamingSystem.ENGLISH,
+    val practiceMode: PracticeMode = PracticeMode.GUIDED,
+    val randomDifficulty: BeginnerDifficulty = BeginnerDifficulty.BEGINNER,
+    val playerProgress: PlayerProgress = PlayerProgress(),
+    val lastXpReward: XpReward? = null,
     val hasMicPermission: Boolean = false,
     val phase: SessionPhase = SessionPhase.IDLE,
     val beatPosition: Float = 0f,
@@ -38,7 +52,7 @@ data class PianoPianoUiState(
     val heardMidi: Int? = null,
     val activeTouchMidis: Set<Int> = emptySet(),
     val previewActiveMidi: Int? = null,
-    val expectedTargetMidi: Int? = null,
+    val expectedTargetMidi: Int? = BeginnerExercises.all.first().notes.firstOrNull { !it.isRest }?.midiNote,
     val calibratedNoiseFloor: Float = 0.004f,
     val statusMessage: String? = null,
     val evaluations: List<NoteEvaluation> = emptyList(),
@@ -47,8 +61,30 @@ data class PianoPianoUiState(
 
 class PianoPianoViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _uiState = MutableStateFlow(PianoPianoUiState())
+    private val prefs = PreferencesRepository(application.applicationContext)
+    private val _uiState = MutableStateFlow(loadInitialState())
     val uiState: StateFlow<PianoPianoUiState> = _uiState.asStateFlow()
+
+    private fun loadInitialState(): PianoPianoUiState {
+        val naming = prefs.loadNoteNaming()
+        val mode = prefs.loadPracticeMode()
+        val difficulty = prefs.loadRandomDifficulty()
+        val progress = prefs.loadProgress()
+        val initialExercise = if (mode == PracticeMode.RANDOM) {
+            ExerciseGenerator.generate(difficulty, sequenceNumber = prefs.nextRandomSequence())
+        } else {
+            BeginnerExercises.all.first()
+        }
+        return PianoPianoUiState(
+            selectedExercise = initialExercise,
+            bpm = initialExercise.defaultBpm,
+            noteNaming = naming,
+            practiceMode = mode,
+            randomDifficulty = difficulty,
+            playerProgress = progress,
+            expectedTargetMidi = initialExercise.notes.firstOrNull { !it.isRest }?.midiNote
+        )
+    }
 
     private val synthesizer = PianoSynthesizer()
     private val captureEngine = AudioCaptureEngine(
@@ -99,18 +135,89 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         super.onCleared()
     }
 
+    fun setNoteNaming(naming: NoteNamingSystem) {
+        prefs.saveNoteNaming(naming)
+        _uiState.update { it.copy(noteNaming = naming) }
+    }
+
     fun selectExercise(exercise: Exercise) {
+        selectGuidedExercise(exercise)
+    }
+
+    fun selectGuidedExercise(exercise: Exercise) {
         stopActiveSession(keepSummary = false)
+        prefs.savePracticeMode(PracticeMode.GUIDED)
         _uiState.update {
             it.copy(
+                practiceMode = PracticeMode.GUIDED,
                 selectedExercise = exercise,
                 bpm = exercise.defaultBpm,
                 beatPosition = 0f,
                 evaluations = emptyList(),
                 expectedTargetMidi = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote,
                 summary = null,
+                lastXpReward = null,
                 statusMessage = null
             )
+        }
+    }
+
+    fun startRandomMode(difficulty: BeginnerDifficulty, autoStart: Boolean = false) {
+        stopActiveSession(keepSummary = false)
+        prefs.savePracticeMode(PracticeMode.RANDOM)
+        prefs.saveRandomDifficulty(difficulty)
+        val generated = ExerciseGenerator.generate(
+            difficulty = difficulty,
+            sequenceNumber = prefs.nextRandomSequence()
+        )
+        _uiState.update {
+            it.copy(
+                practiceMode = PracticeMode.RANDOM,
+                randomDifficulty = difficulty,
+                selectedExercise = generated,
+                bpm = generated.defaultBpm,
+                beatPosition = 0f,
+                evaluations = emptyList(),
+                expectedTargetMidi = generated.notes.firstOrNull { n -> !n.isRest }?.midiNote,
+                summary = null,
+                lastXpReward = null,
+                statusMessage = null
+            )
+        }
+        if (autoStart) {
+            startPracticeIfReady()
+        }
+    }
+
+    fun nextExercise(autoStart: Boolean = true) {
+        val current = _uiState.value
+        stopActiveSession(keepSummary = false)
+        if (current.practiceMode == PracticeMode.RANDOM) {
+            startRandomMode(current.randomDifficulty, autoStart = autoStart)
+            return
+        }
+
+        val idx = current.exercises.indexOfFirst { it.id == current.selectedExercise.id }
+        if (idx >= 0 && idx + 1 < current.exercises.size) {
+            val next = current.exercises[idx + 1]
+            selectGuidedExercise(next)
+            if (autoStart) {
+                startPracticeIfReady()
+            }
+        } else {
+            // Reached end of curated list — continue seamlessly with generated drills
+            startRandomMode(current.randomDifficulty, autoStart = autoStart)
+        }
+    }
+
+    private fun startPracticeIfReady() {
+        val state = _uiState.value
+        if (state.inputSource == InputSource.TOUCH_PIANO || state.hasMicPermission) {
+            startPractice()
+        } else {
+            _uiState.update {
+                it.copy(statusMessage = "Loaded ${state.selectedExercise.title}. Allow Mic or switch to Touch to play.")
+            }
         }
     }
 
@@ -282,6 +389,8 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         activeJudge = judge
         judgeAcceptWindowStartMs = exerciseStartMs - maxOf(250L, (0.45 * msPerBeat).roundToLong())
 
+        val firstNoteLabel = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote
+            ?.let { m -> MidiUtils.midiToName(m, state.noteNaming) } ?: "first note"
         _uiState.update {
             it.copy(
                 phase = SessionPhase.COUNT_IN,
@@ -289,8 +398,9 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                 countInBeat = 1,
                 evaluations = judge.snapshot(),
                 summary = null,
+                lastXpReward = null,
                 expectedTargetMidi = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote,
-                statusMessage = "Count-in: get ready on ${exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote?.let { m -> dev.lofrancolabs.pianopiano.model.MidiUtils.midiToName(m) } ?: "first note"}"
+                statusMessage = "Count-in: get ready on $firstNoteLabel"
             )
         }
 
@@ -352,6 +462,14 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
 
                     if (now >= exerciseEndMs) {
                         val summary = judge.finish(now)
+                        val reward = ProgressTracker.calculateAndApplyReward(
+                            current = _uiState.value.playerProgress,
+                            summary = summary,
+                            difficulty = exercise.difficulty
+                        )
+                        if (reward.xpEarned > 0) {
+                            prefs.saveProgress(reward.updatedProgress)
+                        }
                         activeJudge = null
                         judgeAcceptWindowStartMs = Long.MAX_VALUE
                         _uiState.update {
@@ -361,6 +479,8 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                                 beatFlashAlpha = 0f,
                                 evaluations = summary.evaluations,
                                 summary = summary,
+                                playerProgress = reward.updatedProgress,
+                                lastXpReward = reward,
                                 statusMessage = null
                             )
                         }
@@ -406,6 +526,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                 phase = SessionPhase.IDLE,
                 beatPosition = 0f,
                 summary = null,
+                lastXpReward = null,
                 evaluations = emptyList(),
                 expectedTargetMidi = it.selectedExercise.notes.firstOrNull { n -> !n.isRest }?.midiNote
             )
@@ -413,10 +534,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun selectNextExerciseAndCloseSummary() {
-        val current = _uiState.value
-        val idx = current.exercises.indexOfFirst { it.id == current.selectedExercise.id }
-        val next = current.exercises.getOrElse((idx + 1) % current.exercises.size) { current.exercises.first() }
-        selectExercise(next)
+        nextExercise(autoStart = true)
     }
 
     fun onTouchKeyDown(midi: Int) {

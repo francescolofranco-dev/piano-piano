@@ -48,7 +48,12 @@ class MainActivity : ComponentActivity() {
             PianoPianoTheme {
                 MainScreen(
                     uiState = uiState,
-                    onSelectExercise = viewModel::selectExercise,
+                    onSelectGuidedExercise = viewModel::selectGuidedExercise,
+                    onStartRandomMode = { difficulty ->
+                        viewModel.startRandomMode(difficulty, autoStart = false)
+                    },
+                    onNextExercise = { viewModel.nextExercise(autoStart = true) },
+                    onSelectNoteNaming = viewModel::setNoteNaming,
                     onAdjustBpm = viewModel::adjustBpm,
                     onSetInputSource = viewModel::setInputSource,
                     onRequestMicPermission = {
@@ -59,7 +64,6 @@ class MainActivity : ComponentActivity() {
                     onStartOrStopPractice = viewModel::startPractice,
                     onTouchKeyDown = viewModel::onTouchKeyDown,
                     onTouchKeyUp = viewModel::onTouchKeyUp,
-                    onRetrySummary = viewModel::startPractice,
                     onNextExerciseSummary = viewModel::selectNextExerciseAndCloseSummary,
                     onDismissSummary = viewModel::dismissSummary
                 )

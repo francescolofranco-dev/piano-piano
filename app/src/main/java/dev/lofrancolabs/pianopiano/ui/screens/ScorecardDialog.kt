@@ -1,5 +1,6 @@
 package dev.lofrancolabs.pianopiano.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -24,13 +26,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import dev.lofrancolabs.pianopiano.domain.XpReward
 import dev.lofrancolabs.pianopiano.model.DurationVerdict
 import dev.lofrancolabs.pianopiano.model.ExerciseSummary
 import dev.lofrancolabs.pianopiano.model.MidiUtils
+import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
@@ -40,6 +45,8 @@ import kotlin.math.abs
 @Composable
 fun ScorecardDialog(
     summary: ExerciseSummary,
+    noteNaming: NoteNamingSystem,
+    xpReward: XpReward?,
     onRetry: () -> Unit,
     onNextExercise: () -> Unit,
     onDismiss: () -> Unit
@@ -48,21 +55,21 @@ fun ScorecardDialog(
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = PianoColors.Surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, PianoColors.Border),
+            border = BorderStroke(1.dp, PianoColors.Border),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
                 modifier = Modifier
                     .padding(20.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Exercise Complete",
                             style = MaterialTheme.typography.labelMedium,
@@ -77,6 +84,68 @@ fun ScorecardDialog(
                     }
                     TextButton(onClick = onDismiss) {
                         Text("Close", color = PianoColors.TextMuted)
+                    }
+                }
+
+                // XP & Level Up Card
+                if (xpReward != null) {
+                    val progress = xpReward.updatedProgress
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (xpReward.leveledUp) PianoColors.WarmGold.copy(alpha = 0.16f)
+                                else PianoColors.SurfaceElevated
+                            )
+                            .border(
+                                1.dp,
+                                if (xpReward.leveledUp) PianoColors.WarmGold else PianoColors.Border,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (xpReward.leveledUp) {
+                                    "LEVEL UP! Level ${progress.level} • ${progress.rankTitle}"
+                                } else {
+                                    "Level ${progress.level} • ${progress.rankTitle}"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = if (xpReward.leveledUp) PianoColors.WarmGold else PianoColors.TextPrimary
+                            )
+                            Text(
+                                text = if (xpReward.xpEarned > 0) "+${xpReward.xpEarned} XP" else "0 XP",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (xpReward.xpEarned > 0) PianoColors.Emerald else PianoColors.TextMuted
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { progress.levelProgressFraction },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = PianoColors.WarmGold,
+                            trackColor = PianoColors.Background
+                        )
+                        Text(
+                            text = if (xpReward.xpEarned > 0) {
+                                "${progress.xpIntoCurrentLevel} / ${progress.xpNeededForNextLevel} XP to Level ${progress.level + 1}"
+                            } else {
+                                "Play at least one note during the drill to earn XP."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PianoColors.TextMuted
+                        )
                     }
                 }
 
@@ -129,8 +198,8 @@ fun ScorecardDialog(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     summary.evaluations.forEach { eval ->
-                        val noteName = MidiUtils.midiToName(eval.expectedMidi)
-                        val badge = eval.feedbackBadgeText() ?: "OK"
+                        val noteName = MidiUtils.midiToName(eval.expectedMidi, noteNaming)
+                        val badge = eval.feedbackBadgeText(noteNaming) ?: "OK"
                         val chipColor = when {
                             eval.timingVerdict == TimingVerdict.MISSED ||
                                 eval.pitchVerdict == PitchVerdict.WRONG_KEY ||
@@ -181,7 +250,7 @@ fun ScorecardDialog(
                         ),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Next Exercise", fontWeight = FontWeight.Bold)
+                        Text("Play Next →", fontWeight = FontWeight.Bold)
                     }
                 }
             }

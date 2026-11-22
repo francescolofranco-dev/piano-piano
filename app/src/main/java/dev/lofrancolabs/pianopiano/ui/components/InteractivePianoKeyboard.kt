@@ -24,9 +24,10 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.lofrancolabs.pianopiano.model.MidiUtils
+import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
 
-private data class WhiteKeySpec(val midi: Int, val label: String)
+private data class WhiteKeySpec(val midi: Int)
 private data class BlackKeySpec(val midi: Int, val leftWhiteIndex: Int)
 
 @Composable
@@ -38,6 +39,7 @@ fun InteractivePianoKeyboard(
     isPlaying: Boolean,
     heldCorrectMidi: Int?,
     heldWrongMidi: Int?,
+    noteNaming: NoteNamingSystem,
     onKeyDown: (Int) -> Unit,
     onKeyUp: (Int) -> Unit,
     modifier: Modifier = Modifier
@@ -51,7 +53,7 @@ fun InteractivePianoKeyboard(
         val list = mutableListOf<WhiteKeySpec>()
         for (midi in 48..72) {
             if (!MidiUtils.isBlackKey(midi)) {
-                list.add(WhiteKeySpec(midi, MidiUtils.midiToName(midi)))
+                list.add(WhiteKeySpec(midi))
             }
         }
         list.toList()
@@ -73,8 +75,14 @@ fun InteractivePianoKeyboard(
     val keyLabelStyle = remember {
         TextStyle(color = Color(0xFF474E5D), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
     }
+    val compactKeyLabelStyle = remember {
+        TextStyle(color = Color(0xFF474E5D), fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold)
+    }
     val middleCLabelStyle = remember {
         TextStyle(color = PianoColors.TargetBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+    val compactMiddleCLabelStyle = remember {
+        TextStyle(color = PianoColors.TargetBlue, fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
     }
 
     fun resolveKeyAt(
@@ -201,9 +209,27 @@ fun InteractivePianoKeyboard(
 
             val showLabel = key.midi == 48 || key.midi in 60..67 || key.midi == 72
             if (showLabel) {
-                val style = if (key.midi == 60) middleCLabelStyle else keyLabelStyle
-                val measured = textMeasurer.measure(key.label, style)
-                if (measured.size.width <= keyW - 2f) {
+                val isMiddleC = key.midi == 60
+                val isOctaveAnchor = key.midi == 48 || key.midi == 60 || key.midi == 72
+                val fullText = MidiUtils.midiToName(key.midi, noteNaming, includeOctave = true)
+                val regularStyle = if (isMiddleC) middleCLabelStyle else keyLabelStyle
+                val compactStyle = if (isMiddleC) compactMiddleCLabelStyle else compactKeyLabelStyle
+
+                var measured = textMeasurer.measure(fullText, regularStyle)
+                if (measured.size.width > keyW - 2f) {
+                    measured = if (isOctaveAnchor) {
+                        textMeasurer.measure(fullText, compactStyle)
+                    } else {
+                        val shortText = MidiUtils.midiToName(key.midi, noteNaming, includeOctave = false)
+                        val shortMeasured = textMeasurer.measure(shortText, regularStyle)
+                        if (shortMeasured.size.width <= keyW - 2f) {
+                            shortMeasured
+                        } else {
+                            textMeasurer.measure(shortText, compactStyle)
+                        }
+                    }
+                }
+                if (measured.size.width <= keyW - 1f) {
                     drawText(
                         textLayoutResult = measured,
                         topLeft = Offset(
