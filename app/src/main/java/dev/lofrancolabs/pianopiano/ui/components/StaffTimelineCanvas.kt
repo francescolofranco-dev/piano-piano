@@ -83,14 +83,8 @@ fun StaffTimelineCanvas(
         }
     }
 
-    val measureStyle = remember {
-        TextStyle(color = PianoColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-    }
     val noteLabelStyle = remember {
         TextStyle(color = PianoColors.TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-    }
-    val fingerStyle = remember {
-        TextStyle(color = PianoColors.WarmGold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
     val badgeStyle = remember {
         TextStyle(color = PianoColors.Background, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -157,14 +151,6 @@ fun StaffTimelineCanvas(
                     end = Offset(x, stepToY(0) + stepSpacing * 0.4f),
                     strokeWidth = 1.6.dp.toPx()
                 )
-                if (b < totalBeatsInt) {
-                    val barNumber = (b / exercise.beatsPerBar) + 1
-                    val barText = textMeasurer.measure("M$barNumber", measureStyle)
-                    drawText(
-                        textLayoutResult = barText,
-                        topLeft = Offset(x + 6.dp.toPx(), f5Y - stepSpacing * 2.2f)
-                    )
-                }
             } else {
                 drawLine(
                     color = PianoColors.Border.copy(alpha = 0.38f),
@@ -352,7 +338,7 @@ fun StaffTimelineCanvas(
                 )
             }
 
-            // Note pitch label & finger hint
+            // Note pitch label
             val noteNameLayout = textMeasurer.measure(
                 MidiUtils.midiToName(midi, noteNaming),
                 noteLabelStyle
@@ -364,16 +350,6 @@ fun StaffTimelineCanvas(
                     noteY + noteRadius + 3.dp.toPx()
                 )
             )
-            note.fingerHint?.let { finger ->
-                val fingerLayout = textMeasurer.measure("$finger", fingerStyle)
-                drawText(
-                    textLayoutResult = fingerLayout,
-                    topLeft = Offset(
-                        xStart - fingerLayout.size.width / 2f,
-                        noteY - noteRadius - fingerLayout.size.height - 2.dp.toPx()
-                    )
-                )
-            }
 
             // Floating Feedback Badge
             val badgeText = eval?.feedbackBadgeText(noteNaming)

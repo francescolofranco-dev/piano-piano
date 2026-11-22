@@ -4,44 +4,29 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.Piano
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
@@ -75,7 +60,6 @@ import dev.lofrancolabs.pianopiano.ui.components.StaffTimelineCanvas
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(
     uiState: PianoPianoUiState,
@@ -118,6 +102,7 @@ fun MainScreen(
                     coroutineScope.launch { drawerState.close() }
                     onStartRandomMode(diff)
                 },
+                onAdjustBpm = onAdjustBpm,
                 onSelectInputSource = { src ->
                     onSetInputSource(src)
                     if (src == InputSource.MICROPHONE && !uiState.hasMicPermission) {
@@ -143,17 +128,16 @@ fun MainScreen(
                 .padding(horizontal = 12.dp, vertical = if (isCompactHeight) 6.dp else 10.dp),
             verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 6.dp else 10.dp)
         ) {
-            // Top Header: Menu Button, App Title, Level/XP Pill, Active Exercise Pill, Input Mode
-            FlowRow(
+            // Row 1: Single Ordered Top Bar (Menu, Exercise Title + Quiet Status, Level Badge)
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                itemVerticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 IconButton(
                     onClick = { coroutineScope.launch { drawerState.open() } },
                     enabled = !isActivePractice,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(38.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Menu,
@@ -162,31 +146,49 @@ fun MainScreen(
                     )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = !isActivePractice) {
+                            coroutineScope.launch { drawerState.open() }
+                        }
+                        .padding(vertical = 2.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(9.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (uiState.beatFlashAlpha > 0.1f) PianoColors.WarmGold
-                                else PianoColors.WarmGold.copy(alpha = 0.35f)
-                            )
-                    )
                     Text(
-                        text = "Piano Piano",
+                        text = uiState.selectedExercise.title,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = PianoColors.WarmGold
+                        fontWeight = FontWeight.Bold,
+                        color = PianoColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val modeLabel = if (uiState.inputSource == InputSource.MICROPHONE) "Mic" else "Touch"
+                    val heardSuffix = if (uiState.inputSource == InputSource.MICROPHONE && uiState.heardMidi != null) {
+                        " • ${MidiUtils.midiToName(uiState.heardMidi, uiState.noteNaming)}"
+                    } else {
+                        ""
+                    }
+                    val subtitleText = uiState.statusMessage ?: "${uiState.bpm} BPM • $modeLabel$heardSuffix"
+                    val subtitleColor = when {
+                        uiState.statusMessage != null -> PianoColors.WarmGold
+                        uiState.inputSource == InputSource.MICROPHONE && uiState.heardMidi != null -> PianoColors.Emerald
+                        else -> PianoColors.TextMuted
+                    }
+                    Text(
+                        text = subtitleText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = subtitleColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                // Level / XP Badge (opens menu drawer)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                Text(
+                    text = "Lv ${uiState.playerProgress.level}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = PianoColors.WarmGold,
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(PianoColors.WarmGold.copy(alpha = 0.14f))
@@ -194,111 +196,11 @@ fun MainScreen(
                         .clickable(enabled = !isActivePractice) {
                             coroutineScope.launch { drawerState.open() }
                         }
-                        .padding(horizontal = 9.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.AutoAwesome,
-                        contentDescription = "Player level",
-                        tint = PianoColors.WarmGold,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = "Lv ${uiState.playerProgress.level} • ${uiState.playerProgress.xpIntoCurrentLevel}/${uiState.playerProgress.xpNeededForNextLevel} XP",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = PianoColors.WarmGold
-                    )
-                }
-
-                // Active Exercise Pill (opens drawer to pick drill / random difficulty)
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(PianoColors.SurfaceElevated)
-                        .border(1.dp, PianoColors.Border, RoundedCornerShape(10.dp))
-                        .clickable(enabled = !isActivePractice) {
-                            coroutineScope.launch { drawerState.open() }
-                        }
-                        .padding(horizontal = 11.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = uiState.selectedExercise.title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = PianoColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "• ${uiState.selectedExercise.focusTag}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = PianoColors.TargetBlue
-                    )
-                }
-
-                FilterChip(
-                    selected = uiState.inputSource == InputSource.MICROPHONE,
-                    onClick = {
-                        onSetInputSource(InputSource.MICROPHONE)
-                        if (!uiState.hasMicPermission) onRequestMicPermission()
-                    },
-                    label = { Text("Mic") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Rounded.Mic,
-                            contentDescription = "Microphone mode",
-                            modifier = Modifier.size(16.dp)
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = PianoColors.WarmGold,
-                        selectedLabelColor = PianoColors.Background,
-                        selectedLeadingIconColor = PianoColors.Background
-                    )
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
                 )
-
-                FilterChip(
-                    selected = uiState.inputSource == InputSource.TOUCH_PIANO,
-                    onClick = { onSetInputSource(InputSource.TOUCH_PIANO) },
-                    label = { Text("Touch") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Rounded.Piano,
-                            contentDescription = "Touch piano mode",
-                            modifier = Modifier.size(16.dp)
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = PianoColors.TargetBlue,
-                        selectedLabelColor = PianoColors.Background,
-                        selectedLeadingIconColor = PianoColors.Background
-                    )
-                )
-
-                if (uiState.inputSource == InputSource.MICROPHONE) {
-                    OutlinedButton(
-                        onClick = {
-                            if (!uiState.hasMicPermission) onRequestMicPermission() else onCalibrate()
-                        },
-                        enabled = !isActivePractice && uiState.phase != SessionPhase.CALIBRATING
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Tune,
-                            contentDescription = "Calibrate mic",
-                            modifier = Modifier.size(16.dp),
-                            tint = PianoColors.TextPrimary
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (uiState.phase == SessionPhase.CALIBRATING) "Calibrating..." else "Calibrate",
-                            color = PianoColors.TextPrimary
-                        )
-                    }
-                }
             }
 
-            // Permission rationale banner if Mic mode lacks permission
+            // Permission rationale banner only when Mic mode lacks permission
             if (uiState.inputSource == InputSource.MICROPHONE && !uiState.hasMicPermission) {
                 Row(
                     modifier = Modifier
@@ -311,7 +213,7 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Allow Microphone access so Piano Piano can listen to your piano, or switch to Touch mode.",
+                        text = "Allow Microphone access to listen to your piano, or switch to Touch in the menu.",
                         style = MaterialTheme.typography.bodySmall,
                         color = PianoColors.TextPrimary,
                         modifier = Modifier.weight(1f)
@@ -329,12 +231,11 @@ fun MainScreen(
                 }
             }
 
-            // Transport & Mic Monitor Bar
-            FlowRow(
+            // Row 2: Clean Single Action Bar (Play, Listen, Next)
+            Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                itemVerticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
                     onClick = {
@@ -347,40 +248,45 @@ fun MainScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isActivePractice) PianoColors.Coral else PianoColors.Emerald,
                         contentColor = PianoColors.Background
-                    )
+                    ),
+                    modifier = Modifier.weight(1.2f)
                 ) {
                     Icon(
                         imageVector = if (isActivePractice) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
-                        contentDescription = if (isActivePractice) "Stop" else "Start"
+                        contentDescription = if (isActivePractice) "Stop" else "Start",
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = if (isActivePractice) "Stop" else "Play",
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
 
                 OutlinedButton(
                     onClick = onPreview,
-                    enabled = !isActivePractice && uiState.phase != SessionPhase.CALIBRATING
+                    enabled = !isActivePractice && uiState.phase != SessionPhase.CALIBRATING,
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = if (isPreviewing) Icons.Rounded.Stop else Icons.Rounded.Headphones,
-                        contentDescription = "Listen preview",
+                        contentDescription = "Listen",
                         tint = PianoColors.TargetBlue,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (isPreviewing) "Stop Listen" else "Listen",
-                        color = PianoColors.TextPrimary
+                        text = if (isPreviewing) "Stop" else "Listen",
+                        color = PianoColors.TextPrimary,
+                        maxLines = 1
                     )
                 }
 
-                // One-tap Next Exercise button
                 OutlinedButton(
                     onClick = onNextExercise,
-                    enabled = uiState.phase != SessionPhase.CALIBRATING
+                    enabled = uiState.phase != SessionPhase.CALIBRATING,
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.SkipNext,
@@ -388,94 +294,17 @@ fun MainScreen(
                         tint = PianoColors.WarmGold,
                         modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(2.dp))
                     Text(
                         text = "Next",
                         color = PianoColors.WarmGold,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                // BPM Control
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(PianoColors.Surface)
-                        .border(1.dp, PianoColors.Border, RoundedCornerShape(10.dp))
-                        .padding(horizontal = 4.dp)
-                ) {
-                    IconButton(
-                        onClick = { onAdjustBpm(-4) },
-                        enabled = !isActivePractice && !isPreviewing,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(Icons.Rounded.Remove, contentDescription = "Slower", tint = PianoColors.TextPrimary)
-                    }
-                    Text(
-                        text = "${uiState.bpm} BPM",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = PianoColors.TextPrimary,
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-                    IconButton(
-                        onClick = { onAdjustBpm(4) },
-                        enabled = !isActivePractice && !isPreviewing,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(Icons.Rounded.Add, contentDescription = "Faster", tint = PianoColors.TextPrimary)
-                    }
-                }
-
-                // Live Mic / Heard Note Status Pill
-                if (uiState.inputSource == InputSource.MICROPHONE) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(PianoColors.Surface)
-                            .border(1.dp, PianoColors.Border, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 10.dp, vertical = 7.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.GraphicEq,
-                            contentDescription = "Audio level",
-                            tint = if (uiState.micLevel > 0.15f) PianoColors.Emerald else PianoColors.TextMuted,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        LinearProgressIndicator(
-                            progress = { uiState.micLevel },
-                            modifier = Modifier
-                                .width(56.dp)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp)),
-                            color = PianoColors.Emerald,
-                            trackColor = PianoColors.SurfaceElevated
-                        )
-                        val heardLabel = uiState.heardMidi?.let {
-                            MidiUtils.midiToName(it, uiState.noteNaming)
-                        } ?: "--"
-                        Text(
-                            text = "Heard: $heardLabel",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (uiState.heardMidi != null) PianoColors.Emerald else PianoColors.TextMuted
-                        )
-                    }
-                }
-
-                uiState.statusMessage?.let { msg ->
-                    Text(
-                        text = msg,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = PianoColors.WarmGold,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                 }
             }
 
-            // Center Stage: Hybrid Staff + Proportional Duration Bars
+            // Center Stage: Staff + Proportional Duration Bars
             StaffTimelineCanvas(
                 exercise = uiState.selectedExercise,
                 bpm = uiState.bpm,
@@ -487,7 +316,7 @@ fun MainScreen(
                 noteNaming = uiState.noteNaming,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1.35f)
+                    .weight(1.45f)
             )
 
             // Bottom Dock: Interactive 2-Octave Piano Keyboard (C3 - C5)

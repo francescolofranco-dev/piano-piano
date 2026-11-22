@@ -1,1 +1,1 @@
-Added navigation menu drawer, Italian/Spanish Do-Re-Mi note names, 3-tier beginner random drill generator, one-tap Next practice, and XP leveling.
+Streamlined main screen and organized navigation drawer with calmer layout.

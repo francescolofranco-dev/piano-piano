@@ -39,7 +39,6 @@ import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
-import kotlin.math.abs
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -87,7 +86,6 @@ fun ScorecardDialog(
                     }
                 }
 
-                // XP & Level Up Card
                 if (xpReward != null) {
                     val progress = xpReward.updatedProgress
                     Column(
@@ -113,16 +111,16 @@ fun ScorecardDialog(
                         ) {
                             Text(
                                 text = if (xpReward.leveledUp) {
-                                    "LEVEL UP! Level ${progress.level} • ${progress.rankTitle}"
+                                    "Level Up! \u2192 Level ${progress.level}"
                                 } else {
-                                    "Level ${progress.level} • ${progress.rankTitle}"
+                                    "Level ${progress.level}"
                                 },
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = if (xpReward.leveledUp) PianoColors.WarmGold else PianoColors.TextPrimary
                             )
                             Text(
-                                text = if (xpReward.xpEarned > 0) "+${xpReward.xpEarned} XP" else "0 XP",
+                                text = "+${xpReward.xpEarned} XP",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (xpReward.xpEarned > 0) PianoColors.Emerald else PianoColors.TextMuted
@@ -138,11 +136,7 @@ fun ScorecardDialog(
                             trackColor = PianoColors.Background
                         )
                         Text(
-                            text = if (xpReward.xpEarned > 0) {
-                                "${progress.xpIntoCurrentLevel} / ${progress.xpNeededForNextLevel} XP to Level ${progress.level + 1}"
-                            } else {
-                                "Play at least one note during the drill to earn XP."
-                            },
+                            text = "${progress.xpIntoCurrentLevel} / ${progress.xpNeededForNextLevel} XP",
                             style = MaterialTheme.typography.labelSmall,
                             color = PianoColors.TextMuted
                         )
@@ -166,32 +160,12 @@ fun ScorecardDialog(
                         modifier = Modifier.weight(1f)
                     )
                     MetricBox(
-                        label = "Hold Length",
+                        label = "Hold",
                         value = "${summary.durationAccuracyPercent}%",
                         color = metricColor(summary.durationAccuracyPercent),
                         modifier = Modifier.weight(1f)
                     )
                 }
-
-                val tendencyText = when {
-                    abs(summary.averageOnsetOffsetMs) <= 20 ->
-                        "Timing tendency: steady right on the beat (${summary.averageOnsetOffsetMs}ms avg)."
-                    summary.averageOnsetOffsetMs < 0 ->
-                        "Timing tendency: rushing slightly (${summary.averageOnsetOffsetMs}ms avg)."
-                    else ->
-                        "Timing tendency: trailing slightly (+${summary.averageOnsetOffsetMs}ms avg)."
-                }
-                Text(
-                    text = tendencyText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = PianoColors.TextMuted
-                )
-
-                Text(
-                    text = "Note Breakdown (${summary.totalNotes} notes)",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = PianoColors.TextPrimary
-                )
 
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -250,7 +224,7 @@ fun ScorecardDialog(
                         ),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Play Next →", fontWeight = FontWeight.Bold)
+                        Text("Play Next \u2192", fontWeight = FontWeight.Bold)
                     }
                 }
             }

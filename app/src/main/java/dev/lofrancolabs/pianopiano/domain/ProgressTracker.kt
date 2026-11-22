@@ -20,15 +20,6 @@ data class PlayerProgress(
     val levelProgressFraction: Float
         get() = (xpIntoCurrentLevel.toFloat() / xpNeededForNextLevel.coerceAtLeast(1)).coerceIn(0f, 1f)
 
-    val rankTitle: String
-        get() = when (level) {
-            1, 2 -> "First Keys"
-            3, 4 -> "Steady Pulse"
-            in 5..7 -> "C-Position Explorer"
-            in 8..10 -> "Rhythm Keeper"
-            else -> "Piano Piano Apprentice"
-        }
-
     private data class LevelBreakdown(val level: Int, val xpIntoLevel: Int, val xpNeeded: Int)
 
     private fun computeLevelBreakdown(xp: Int): LevelBreakdown {

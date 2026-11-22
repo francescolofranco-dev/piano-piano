@@ -18,7 +18,6 @@ class ProgressTrackerTest {
         assertEquals(1, lv1.level)
         assertEquals(0, lv1.xpIntoCurrentLevel)
         assertEquals(100, lv1.xpNeededForNextLevel)
-        assertEquals("First Keys", lv1.rankTitle)
 
         val lv2 = PlayerProgress(totalXp = 100)
         assertEquals(2, lv2.level)
@@ -29,7 +28,6 @@ class ProgressTrackerTest {
         assertEquals(3, lv3.level)
         assertEquals(0, lv3.xpIntoCurrentLevel)
         assertEquals(200, lv3.xpNeededForNextLevel)
-        assertEquals("Steady Pulse", lv3.rankTitle)
     }
 
     @Test
