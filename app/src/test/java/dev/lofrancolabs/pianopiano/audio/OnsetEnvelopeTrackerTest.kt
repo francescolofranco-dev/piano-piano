@@ -167,7 +167,7 @@ class OnsetEnvelopeTrackerTest {
         val fD4 = MidiUtils.midiToFrequency(62)
 
         // RMS ~0.005 is above liveGate (0.00351) but below LOW onsetThreshold (0.0108)
-        for (h in 0 until 8) {
+        for (h in 0 until 16) {
             for (i in 0 until 256) {
                 val t = (h * 256 + i).toDouble() / 48_000.0
                 hop[i] = (0.007 * sin(2.0 * PI * fD4 * t)).toFloat()
@@ -180,7 +180,7 @@ class OnsetEnvelopeTrackerTest {
         assertNotNull("Expected live pitch estimate while sustained note sounds", tracker.currentPitchEstimate)
         assertEquals(62, tracker.currentPitchEstimate!!.midiNote)
 
-        repeat(6) {
+        repeat(8) {
             hop.fill(0f)
             tracker.processHop(hop, currentMs(sampleIndex))
             sampleIndex += 256
@@ -219,7 +219,7 @@ class OnsetEnvelopeTrackerTest {
             sampleIndex += 256
         }
 
-        // Gradual multi-hop re-strike of same C4 key (each hop ~1.3x, cumulative >1.55x over tail)
+        // Gradual multi-hop re-strike of same C4 key (each hop ~1.3x, cumulative >1.65x over tail)
         val reattackAmps = floatArrayOf(0.025f, 0.032f, 0.042f, 0.055f)
         for (h in 0 until 16) {
             val amp = if (h < reattackAmps.size) reattackAmps[h] else 0.055f
@@ -256,9 +256,9 @@ class OnsetEnvelopeTrackerTest {
             sampleIndex += 256
         }
 
-        // 16 hops of unpitched white noise (~0.026 RMS) triggers reject lockout above offsetThreshold
+        // 22 hops of unpitched white noise (~0.026 RMS) exceeds MAX_SETTLE_HOPS and triggers lockout
         var seed = 1234567
-        repeat(16) {
+        repeat(22) {
             for (i in 0 until 256) {
                 seed = seed * 1664525 + 1013904223
                 val normalized = ((seed ushr 16) and 0xFFFF) / 32768.0 - 1.0
@@ -270,7 +270,7 @@ class OnsetEnvelopeTrackerTest {
 
         // Immediately transition into steady C4 at equal RMS (~0.026) without dropping to silence
         val fC4 = MidiUtils.midiToFrequency(60)
-        for (h in 0 until 14) {
+        for (h in 0 until 24) {
             for (i in 0 until 256) {
                 val t = (h * 256 + i).toDouble() / 48_000.0
                 hop[i] = (0.0368 * sin(2.0 * PI * fC4 * t)).toFloat()
@@ -281,6 +281,125 @@ class OnsetEnvelopeTrackerTest {
 
         val onEvents = events.filter { it.isOn }
         assertEquals(1, onEvents.size)
+        assertEquals(60, onEvents[0].midi)
+    }
+
+    @Test
+    fun ignoresTransientWrongNoteGlitchDuringSingleHeldNote() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+        repeat(8) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val fC4 = MidiUtils.midiToFrequency(60)
+        val fG5 = MidiUtils.midiToFrequency(79)
+        for (h in 0 until 45) {
+            val isGlitch = h in 22..23
+            val f = if (isGlitch) fG5 else fC4
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                hop[i] = (0.20 * sin(2.0 * PI * f * t)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onEvents = events.filter { it.isOn }
+        assertEquals(1, onEvents.size)
+        assertEquals(60, onEvents[0].midi)
+        assertNotNull(tracker.currentPitchEstimate)
+        assertEquals(60, tracker.currentPitchEstimate!!.midiNote)
+    }
+
+    @Test
+    fun ignoresRapidPitchGlideLikeSpeech() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+        repeat(8) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        // Rapid continuous glide from 150 Hz -> 320 Hz across 32 hops (~170 ms) like vocal inflection
+        var phase = 0.0
+        val totalSamples = 32 * 256
+        for (h in 0 until 32) {
+            for (i in 0 until 256) {
+                val progress = (h * 256 + i).toDouble() / totalSamples.toDouble()
+                val freq = 150.0 + progress * 170.0
+                phase += (2.0 * PI * freq) / 48_000.0
+                hop[i] = (0.08 * sin(phase)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onEvents = events.filter { it.isOn }
+        assertEquals("Rapid pitch glide should not generate spurious strike trains", 0, onEvents.size)
+    }
+
+    @Test
+    fun ignoresOctaveUpHarmonicFadeDuringDecay() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+        repeat(8) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val fC4 = MidiUtils.midiToFrequency(60)
+        val fC5 = MidiUtils.midiToFrequency(72)
+        // Loud C4 fundamental attack & sustain
+        for (h in 0 until 25) {
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                hop[i] = (0.25 * sin(2.0 * PI * fC4 * t)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        // Decaying tail (< 45% peak) dominated by 2nd harmonic C5 (72)
+        for (h in 0 until 28) {
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                hop[i] = (0.04 * sin(2.0 * PI * fC5 * t)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onEvents = events.filter { it.isOn }
+        assertEquals("Decaying 2nd-harmonic shift should not re-trigger an octave-up note", 1, onEvents.size)
         assertEquals(60, onEvents[0].midi)
     }
 

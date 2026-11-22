@@ -322,7 +322,7 @@ class AudioCaptureEngine(
         const val HOP_SIZE = 256
         private const val INPUT_LATENCY_MS = 15L
         private const val CALIBRATION_HOPS = 280 // ~1.5 seconds
-        private const val UI_EMIT_INTERVAL_MS = 33L
+        private const val UI_EMIT_INTERVAL_MS = 60L
         private const val DC_BLOCK_ALPHA = 0.995f
     }
 }

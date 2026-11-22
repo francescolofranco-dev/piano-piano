@@ -1,1 +1,1 @@
-Fixed live exercise note detection by releasing the count-in AudioTrack before capturing microphone audio, improving repeated-note re-attack detection and lockout recovery over room reverb, guarding against octave-up harmonic errors, and expanding late tolerance on half/whole notes.
+Stabilized live pitch readout and strike detection with a wider 2048-sample YIN analysis window, slower sampling cadence, confidence-weighted multi-frame consensus voting, and harmonic/glide filtering so single piano notes stay steady without spurious rapid detections.

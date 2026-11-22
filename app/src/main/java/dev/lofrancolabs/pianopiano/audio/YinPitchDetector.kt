@@ -11,17 +11,18 @@ data class PitchEstimate(
 )
 
 /**
- * Real-time YIN monophonic pitch detector tuned for piano frequencies (~55 Hz to ~1850 Hz).
+ * Real-time YIN monophonic pitch detector tuned for piano frequencies (~55 Hz to ~1150 Hz).
  * Scratch buffers are pre-allocated so per-hop detection avoids heap allocations.
  */
 class YinPitchDetector(
     private val sampleRate: Int = 48_000,
-    val windowSize: Int = 1024,
-    private val yinThreshold: Float = 0.16f,
+    val windowSize: Int = 2048,
+    private val yinThreshold: Float = 0.14f,
     private val minRms: Float = 0.0015f
 ) {
     private val halfWindow = windowSize / 2
-    private val minTau = (sampleRate / 1850f).toInt().coerceAtLeast(2)
+    // Scan from 3000 Hz upward so high-frequency whistles/clacks don't alias onto 2*T sub-periods
+    private val minTau = (sampleRate / 3000f).toInt().coerceAtLeast(12)
     private val maxTau = (sampleRate / 85f).toInt().coerceAtMost(halfWindow - 2)
 
     private val normalizedBuffer = FloatArray(windowSize)
@@ -84,10 +85,10 @@ class YinPitchDetector(
             tau++
         }
 
-        // Fallback to strong global minimum below 0.30 if slightly inharmonic acoustic piano string
+        // Fallback to strong global minimum below 0.22 if slightly inharmonic acoustic piano string
         if (tauEstimate == -1) {
             var bestTau = -1
-            var bestVal = 0.30f
+            var bestVal = 0.22f
             for (t in minTau..maxTau) {
                 if (cmndBuffer[t] < bestVal) {
                     bestVal = cmndBuffer[t]
@@ -99,21 +100,30 @@ class YinPitchDetector(
 
         if (tauEstimate <= 0) return null
 
-        // Guard against 2nd-harmonic octave-up lock when phone mics attenuate the fundamental
-        if (cmndBuffer[tauEstimate] > 0.04f) {
-            val doubleTau = tauEstimate * 2
-            if (doubleTau in (minTau + 2)..(maxTau - 2)) {
-                var subTau = -1
-                var subVal = Float.MAX_VALUE
-                for (t in (doubleTau - 2)..(doubleTau + 2)) {
-                    if (cmndBuffer[t] < subVal) {
-                        subVal = cmndBuffer[t]
-                        subTau = t
+        // Guard against 2nd/3rd-harmonic octave-up lock when phone mics attenuate the fundamental
+        if (cmndBuffer[tauEstimate] > 0.03f) {
+            val thresholdSub = minOf(cmndBuffer[tauEstimate] * 0.85f, 0.20f)
+            var chosenSubTau = -1
+            var chosenSubVal = Float.MAX_VALUE
+            for (mult in 2..3) {
+                val targetTau = tauEstimate * mult
+                if (targetTau in (minTau + 2)..(maxTau - 2)) {
+                    var localBestTau = -1
+                    var localBestVal = Float.MAX_VALUE
+                    for (t in (targetTau - 2)..(targetTau + 2)) {
+                        if (cmndBuffer[t] < localBestVal) {
+                            localBestVal = cmndBuffer[t]
+                            localBestTau = t
+                        }
+                    }
+                    if (localBestTau > 0 && localBestVal < thresholdSub && localBestVal < chosenSubVal) {
+                        chosenSubVal = localBestVal
+                        chosenSubTau = localBestTau
                     }
                 }
-                if (subTau > 0 && subVal < cmndBuffer[tauEstimate] * 0.80f && subVal < 0.25f) {
-                    tauEstimate = subTau
-                }
+            }
+            if (chosenSubTau > 0) {
+                tauEstimate = chosenSubTau
             }
         }
 
@@ -133,7 +143,7 @@ class YinPitchDetector(
         }
 
         val freqHz = sampleRate.toFloat() / betterTau
-        if (freqHz < 50f || freqHz > 2000f) return null
+        if (freqHz < 50f || freqHz > 1150f) return null
 
         val midi = MidiUtils.frequencyToMidi(freqHz.toDouble())
         val confidence = (1f - cmndBuffer[tauEstimate]).coerceIn(0f, 1f)

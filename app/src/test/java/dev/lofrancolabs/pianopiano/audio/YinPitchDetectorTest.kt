@@ -54,13 +54,22 @@ class YinPitchDetectorTest {
     fun prefersFundamentalOverStrongSecondHarmonic() {
         val fC4 = MidiUtils.midiToFrequency(60)
         // Attenuated fundamental + dominant 2nd harmonic (common on mobile phone mics)
-        val c4Buffer = FloatArray(detector.windowSize) { idx ->
+        val c4SecondHarmonic = FloatArray(detector.windowSize) { idx ->
             val t = idx.toDouble() / sampleRate
             (0.08 * (0.22 * sin(2.0 * PI * fC4 * t) + 1.0 * sin(2.0 * PI * fC4 * 2.0 * t))).toFloat()
         }
-        val c4Result = detector.detect(c4Buffer)
+        val c4Result = detector.detect(c4SecondHarmonic)
         assertNotNull("Expected YIN to detect C4 despite dominant 2nd harmonic", c4Result)
         assertEquals(60, c4Result!!.midiNote)
+
+        // Attenuated fundamental + dominant 3rd harmonic
+        val c4ThirdHarmonic = FloatArray(detector.windowSize) { idx ->
+            val t = idx.toDouble() / sampleRate
+            (0.08 * (0.22 * sin(2.0 * PI * fC4 * t) + 1.0 * sin(2.0 * PI * fC4 * 3.0 * t))).toFloat()
+        }
+        val c4ThirdResult = detector.detect(c4ThirdHarmonic)
+        assertNotNull("Expected YIN to detect C4 despite dominant 3rd harmonic", c4ThirdResult)
+        assertEquals(60, c4ThirdResult!!.midiNote)
 
         val fC5 = MidiUtils.midiToFrequency(72)
         val c5Buffer = FloatArray(detector.windowSize) { idx ->
@@ -70,6 +79,15 @@ class YinPitchDetectorTest {
         val c5Result = detector.detect(c5Buffer)
         assertNotNull("Expected clean C5 not to drop down an octave", c5Result)
         assertEquals(72, c5Result!!.midiNote)
+    }
+
+    @Test
+    fun rejectsHighFrequencyAbovePianoRange() {
+        val highFreqBuffer = FloatArray(detector.windowSize) { idx ->
+            val t = idx.toDouble() / sampleRate
+            (0.15 * sin(2.0 * PI * 1600.0 * t)).toFloat()
+        }
+        assertNull("Expected 1600 Hz transient above practice range to be ignored", detector.detect(highFreqBuffer))
     }
 
     @Test

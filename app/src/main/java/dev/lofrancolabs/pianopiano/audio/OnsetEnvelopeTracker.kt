@@ -1,12 +1,11 @@
 package dev.lofrancolabs.pianopiano.audio
 
 import dev.lofrancolabs.pianopiano.model.MicSensitivity
-import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * Tracks note onset (hammer strike), settles through the transient (~16 ms),
- * locks pitch via YIN, and tracks damper release or repeated strikes.
+ * Tracks note onset (hammer strike), settles through the transient (~32–53 ms),
+ * locks pitch via multi-frame YIN consensus voting, and tracks damper release or repeated strikes.
  */
 class OnsetEnvelopeTracker(
     private val sampleRate: Int = 48_000,
@@ -19,6 +18,105 @@ class OnsetEnvelopeTracker(
         IDLE,
         ATTACK_SETTLING,
         SUSTAINING
+    }
+
+    private data class ConsensusResult(
+        val estimate: PitchEstimate,
+        val voteCount: Int,
+        val weightShare: Float
+    )
+
+    private class PitchVoteRing(private val capacity: Int) {
+        private val midis = IntArray(capacity) { -1 }
+        private val freqs = FloatArray(capacity)
+        private val confs = FloatArray(capacity)
+        private var writeIndex = 0
+        private var count = 0
+
+        fun clear() {
+            midis.fill(-1)
+            writeIndex = 0
+            count = 0
+        }
+
+        fun add(estimate: PitchEstimate?) {
+            midis[writeIndex] = estimate?.midiNote ?: -1
+            freqs[writeIndex] = estimate?.frequencyHz ?: 0f
+            confs[writeIndex] = estimate?.confidence ?: 0f
+            writeIndex = (writeIndex + 1) % capacity
+            if (count < capacity) {
+                count++
+            }
+        }
+
+        fun seed(estimate: PitchEstimate, repeats: Int) {
+            clear()
+            val times = repeats.coerceIn(0, capacity)
+            repeat(times) {
+                add(estimate)
+            }
+        }
+
+        fun validCount(): Int {
+            var valid = 0
+            for (i in 0 until count) {
+                if (midis[i] >= 0) valid++
+            }
+            return valid
+        }
+
+        fun consensus(minVotes: Int, minWeightShare: Float): ConsensusResult? {
+            if (count < minVotes) return null
+            var totalWeight = 0f
+            for (i in 0 until count) {
+                if (midis[i] >= 0) {
+                    totalWeight += confs[i]
+                }
+            }
+            if (totalWeight <= 1e-6f) return null
+
+            var bestMidi = -1
+            var bestWeight = 0f
+            var bestVotes = 0
+            var bestFreqWeightedSum = 0f
+
+            for (i in 0 until count) {
+                val candidateMidi = midis[i]
+                if (candidateMidi < 0) continue
+
+                var weightSum = 0f
+                var voteCount = 0
+                var freqWeightedSum = 0f
+                for (j in 0 until count) {
+                    if (midis[j] == candidateMidi) {
+                        val w = confs[j]
+                        weightSum += w
+                        voteCount++
+                        freqWeightedSum += freqs[j] * w
+                    }
+                }
+                if (weightSum > bestWeight) {
+                    bestWeight = weightSum
+                    bestMidi = candidateMidi
+                    bestVotes = voteCount
+                    bestFreqWeightedSum = freqWeightedSum
+                }
+            }
+
+            if (bestMidi < 0 || bestVotes < minVotes) return null
+            val share = bestWeight / totalWeight
+            if (share < minWeightShare) return null
+
+            return ConsensusResult(
+                estimate = PitchEstimate(
+                    frequencyHz = bestFreqWeightedSum / bestWeight,
+                    midiNote = bestMidi,
+                    confidence = (bestWeight / bestVotes).coerceIn(0f, 1f)
+                ),
+                voteCount = bestVotes,
+                weightShare = share
+            )
+        }
     }
 
     private val windowSize = pitchDetector.windowSize
@@ -34,18 +132,18 @@ class OnsetEnvelopeTracker(
         private set
 
     private var prevRms = 0f
+    private var activePeakRms = 0f
     private var settleHops = 0
     private var hopsSinceOnset = 0
     private var quietHops = 0
     private var pendingOnsetMs = 0L
     private var activeMidi = -1
-    private var candidateLegatoMidi = -1
-    private var candidateLegatoHops = 0
     private var waitForQuietAfterReject = false
     private var livePitchHopCounter = 0
     private var livePitchQuietHops = 0
-    private var consecutiveLivePitchMidi = -1
-    private var consecutiveLivePitchCount = 0
+    private var latestStableConsensus: ConsensusResult? = null
+    private val liveVoteRing = PitchVoteRing(LIVE_VOTE_WINDOW_SIZE)
+    private val attackVoteRing = PitchVoteRing(ATTACK_VOTE_WINDOW_SIZE)
     private val rmsHistory = FloatArray(REATTACK_HISTORY_HOPS)
     private var rmsHistoryIndex = 0
     private var rmsHistoryCount = 0
@@ -77,18 +175,18 @@ class OnsetEnvelopeTracker(
         analysisWindow.fill(0f)
         state = State.IDLE
         prevRms = 0f
+        activePeakRms = 0f
         settleHops = 0
         hopsSinceOnset = 0
         quietHops = 0
         pendingOnsetMs = 0L
         activeMidi = -1
-        candidateLegatoMidi = -1
-        candidateLegatoHops = 0
         waitForQuietAfterReject = false
         livePitchHopCounter = 0
         livePitchQuietHops = 0
-        consecutiveLivePitchMidi = -1
-        consecutiveLivePitchCount = 0
+        latestStableConsensus = null
+        liveVoteRing.clear()
+        attackVoteRing.clear()
         resetRmsHistory()
         currentRms = 0f
         currentMidi = null
@@ -107,31 +205,40 @@ class OnsetEnvelopeTracker(
         currentRms = rms
 
         val liveGate = max(currentOffsetThreshold * 0.65f, 0.002f)
+        var didSampleLiveThisHop = false
         if (rms >= liveGate) {
             livePitchQuietHops = 0
             livePitchHopCounter++
             if (livePitchHopCounter >= LIVE_PITCH_HOP_INTERVAL) {
                 livePitchHopCounter = 0
-                val liveEstimate = pitchDetector.detect(analysisWindow)
-                if (liveEstimate != null) {
-                    currentPitchEstimate = liveEstimate
-                    if (liveEstimate.confidence >= LIVE_LOCK_CONFIDENCE) {
-                        if (liveEstimate.midiNote == consecutiveLivePitchMidi) {
-                            consecutiveLivePitchCount++
-                        } else {
-                            consecutiveLivePitchMidi = liveEstimate.midiNote
-                            consecutiveLivePitchCount = 1
-                        }
+                didSampleLiveThisHop = true
+                val rawEstimate = pitchDetector.detect(analysisWindow)
+                liveVoteRing.add(rawEstimate)
+                val liveConsensus = liveVoteRing.consensus(
+                    minVotes = LIVE_CONSENSUS_MIN_VOTES,
+                    minWeightShare = LIVE_CONSENSUS_MIN_SHARE
+                )
+                if (liveConsensus != null) {
+                    currentPitchEstimate = liveConsensus.estimate
+                    latestStableConsensus = if (liveConsensus.estimate.confidence >= LIVE_LOCK_CONFIDENCE) {
+                        liveConsensus
+                    } else {
+                        null
+                    }
+                } else {
+                    latestStableConsensus = null
+                    if (liveVoteRing.validCount() == 0) {
+                        currentPitchEstimate = null
                     }
                 }
             }
         } else {
             livePitchHopCounter = 0
-            consecutiveLivePitchMidi = -1
-            consecutiveLivePitchCount = 0
             livePitchQuietHops++
             if (livePitchQuietHops >= QUIET_HOPS_TO_RELEASE) {
+                liveVoteRing.clear()
                 currentPitchEstimate = null
+                latestStableConsensus = null
             }
         }
 
@@ -140,29 +247,32 @@ class OnsetEnvelopeTracker(
                 if (rms < currentOffsetThreshold) {
                     waitForQuietAfterReject = false
                 }
-                val lockedEstimate = currentPitchEstimate
+                val stable = latestStableConsensus
                 if (rms >= currentOnsetThreshold &&
                     (!waitForQuietAfterReject || isMultiHopReattack(rms, minRecentRms))
                 ) {
                     state = State.ATTACK_SETTLING
                     pendingOnsetMs = timestampMs
+                    activePeakRms = rms
                     settleHops = 1
                     hopsSinceOnset = 1
                     quietHops = 0
+                    attackVoteRing.clear()
                     resetRmsHistory()
                 } else if (waitForQuietAfterReject &&
                     rms >= currentOnsetThreshold &&
-                    consecutiveLivePitchCount >= 2 &&
-                    lockedEstimate != null
+                    stable != null &&
+                    stable.voteCount >= RECOVERY_MIN_VOTES &&
+                    stable.weightShare >= RECOVERY_MIN_SHARE
                 ) {
-                    activeMidi = lockedEstimate.midiNote
-                    currentMidi = lockedEstimate.midiNote
+                    activeMidi = stable.estimate.midiNote
+                    currentMidi = stable.estimate.midiNote
+                    currentPitchEstimate = stable.estimate
+                    activePeakRms = rms
                     state = State.SUSTAINING
                     waitForQuietAfterReject = false
                     hopsSinceOnset = 0
                     quietHops = 0
-                    candidateLegatoMidi = -1
-                    candidateLegatoHops = 0
                     resetRmsHistory()
                     onNoteOn(activeMidi, timestampMs)
                 }
@@ -171,33 +281,55 @@ class OnsetEnvelopeTracker(
             State.ATTACK_SETTLING -> {
                 settleHops++
                 hopsSinceOnset++
-                if (rms < currentOffsetThreshold * 0.7f && settleHops >= 4) {
+                activePeakRms = max(activePeakRms, rms)
+                if (rms < currentOffsetThreshold * 0.7f && settleHops >= 6) {
                     state = State.IDLE
                     waitForQuietAfterReject = false
                     currentMidi = null
-                } else if (settleHops >= SETTLE_HOPS_REQUIRED) {
-                    val estimate = pitchDetector.detect(analysisWindow)
-                    if (estimate != null) {
-                        currentPitchEstimate = estimate
-                        activeMidi = estimate.midiNote
-                        currentMidi = estimate.midiNote
+                    attackVoteRing.clear()
+                } else if (settleHops >= SETTLE_SKIP_HOPS &&
+                    (settleHops - SETTLE_SKIP_HOPS) % ATTACK_SAMPLE_HOP_INTERVAL == 0
+                ) {
+                    val est = pitchDetector.detect(analysisWindow)
+                    attackVoteRing.add(est)
+                    var locked = attackVoteRing.consensus(
+                        minVotes = ATTACK_CONFIRM_VOTES,
+                        minWeightShare = ATTACK_CONFIRM_SHARE
+                    )
+                    if (locked == null && settleHops >= 14) {
+                        locked = attackVoteRing.consensus(
+                            minVotes = 2,
+                            minWeightShare = ATTACK_FALLBACK_SHARE
+                        )
+                    }
+                    if (locked != null) {
+                        currentPitchEstimate = locked.estimate
+                        liveVoteRing.seed(locked.estimate, ATTACK_CONFIRM_VOTES)
+                        activeMidi = locked.estimate.midiNote
+                        currentMidi = locked.estimate.midiNote
                         state = State.SUSTAINING
                         waitForQuietAfterReject = false
                         quietHops = 0
-                        candidateLegatoMidi = -1
-                        candidateLegatoHops = 0
+                        attackVoteRing.clear()
                         resetRmsHistory()
-                        onNoteOn(estimate.midiNote, pendingOnsetMs)
+                        onNoteOn(locked.estimate.midiNote, pendingOnsetMs)
                     } else if (settleHops >= MAX_SETTLE_HOPS) {
                         state = State.IDLE
                         waitForQuietAfterReject = true
                         currentMidi = null
+                        attackVoteRing.clear()
                     }
+                } else if (settleHops >= MAX_SETTLE_HOPS) {
+                    state = State.IDLE
+                    waitForQuietAfterReject = true
+                    currentMidi = null
+                    attackVoteRing.clear()
                 }
             }
 
             State.SUSTAINING -> {
                 hopsSinceOnset++
+                activePeakRms = max(activePeakRms, rms)
 
                 // 1) Check energy decay (damper release)
                 if (rms < currentOffsetThreshold) {
@@ -225,45 +357,46 @@ class OnsetEnvelopeTracker(
                     onNoteOff(prevMidi, timestampMs)
                     state = State.ATTACK_SETTLING
                     pendingOnsetMs = timestampMs
+                    activePeakRms = rms
                     settleHops = 1
                     hopsSinceOnset = 1
                     quietHops = 0
-                    candidateLegatoMidi = -1
-                    candidateLegatoHops = 0
                     waitForQuietAfterReject = false
+                    liveVoteRing.clear()
+                    attackVoteRing.clear()
                     resetRmsHistory()
                     prevRms = rms
                     recordRms(rms)
                     return
                 }
 
-                // 3) Check stable legato pitch change
-                if (hopsSinceOnset >= MIN_LEGATO_HOPS && rms >= currentOffsetThreshold) {
-                    val estimate = pitchDetector.detect(analysisWindow)
-                    if (estimate != null && estimate.confidence >= LEGATO_MIN_CONFIDENCE) {
-                        if (abs(estimate.midiNote - activeMidi) >= 1) {
-                            if (estimate.midiNote == candidateLegatoMidi) {
-                                candidateLegatoHops++
-                            } else {
-                                candidateLegatoMidi = estimate.midiNote
-                                candidateLegatoHops = 1
-                            }
-                            if (candidateLegatoHops >= LEGATO_CONFIRM_HOPS) {
-                                val prevMidi = activeMidi
-                                val newMidi = candidateLegatoMidi
-                                onNoteOff(prevMidi, timestampMs)
-                                activeMidi = newMidi
-                                currentMidi = newMidi
-                                currentPitchEstimate = estimate
-                                hopsSinceOnset = 0
-                                candidateLegatoMidi = -1
-                                candidateLegatoHops = 0
-                                resetRmsHistory()
-                                onNoteOn(newMidi, max(0L, timestampMs - 10L))
-                            }
-                        } else {
-                            candidateLegatoMidi = -1
-                            candidateLegatoHops = 0
+                // 3) Check debounced consensus legato pitch change
+                if (hopsSinceOnset >= MIN_LEGATO_HOPS &&
+                    rms >= currentOffsetThreshold &&
+                    didSampleLiveThisHop
+                ) {
+                    val legatoConsensus = liveVoteRing.consensus(
+                        minVotes = LEGATO_CONFIRM_VOTES,
+                        minWeightShare = LEGATO_CONFIRM_SHARE
+                    )
+                    if (legatoConsensus != null &&
+                        legatoConsensus.estimate.confidence >= LEGATO_MIN_CONFIDENCE &&
+                        legatoConsensus.estimate.midiNote != activeMidi
+                    ) {
+                        val isOctaveUpDecay =
+                            legatoConsensus.estimate.midiNote == activeMidi + 12 &&
+                                rms < activePeakRms * OCTAVE_DECAY_RMS_RATIO
+                        if (!isOctaveUpDecay) {
+                            val prevMidi = activeMidi
+                            val newMidi = legatoConsensus.estimate.midiNote
+                            onNoteOff(prevMidi, timestampMs)
+                            activeMidi = newMidi
+                            currentMidi = newMidi
+                            currentPitchEstimate = legatoConsensus.estimate
+                            activePeakRms = rms
+                            hopsSinceOnset = 0
+                            resetRmsHistory()
+                            onNoteOn(newMidi, max(0L, timestampMs - 40L))
                         }
                     }
                 }
@@ -311,16 +444,28 @@ class OnsetEnvelopeTracker(
     }
 
     companion object {
-        private const val SETTLE_HOPS_REQUIRED = 4   // 1024 samples (~21.3 ms) so YIN sees only post-onset audio
-        private const val MAX_SETTLE_HOPS = 14       // ~75 ms max wait for pitch lock
-        private const val QUIET_HOPS_TO_RELEASE = 4  // ~21 ms below sustain floor
-        private const val LIVE_PITCH_HOP_INTERVAL = 4 // ~21 ms continuous pitch refresh for diagnostics
-        private const val LIVE_LOCK_CONFIDENCE = 0.68f
-        private const val MIN_NOTE_LENGTH_HOPS = 12  // ~64 ms refractory period
-        private const val MIN_LEGATO_HOPS = 7
-        private const val LEGATO_CONFIRM_HOPS = 3
-        private const val LEGATO_MIN_CONFIDENCE = 0.65f
-        private const val REATTACK_HISTORY_HOPS = 6
-        private const val MULTI_HOP_REATTACK_RATIO = 1.55f
+        private const val SETTLE_SKIP_HOPS = 6          // ~32 ms transient skip before sampling attack
+        private const val ATTACK_SAMPLE_HOP_INTERVAL = 2 // ~10.7 ms per attack vote
+        private const val ATTACK_VOTE_WINDOW_SIZE = 7
+        private const val ATTACK_CONFIRM_VOTES = 3
+        private const val ATTACK_CONFIRM_SHARE = 0.55f
+        private const val ATTACK_FALLBACK_SHARE = 0.60f
+        private const val MAX_SETTLE_HOPS = 18           // ~96 ms max wait for attack consensus
+        private const val QUIET_HOPS_TO_RELEASE = 6      // ~32 ms below sustain floor
+        private const val LIVE_PITCH_HOP_INTERVAL = 4    // ~21.3 ms per live vote sample
+        private const val LIVE_VOTE_WINDOW_SIZE = 7      // ~150 ms rolling consensus window
+        private const val LIVE_CONSENSUS_MIN_VOTES = 3
+        private const val LIVE_CONSENSUS_MIN_SHARE = 0.55f
+        private const val LIVE_LOCK_CONFIDENCE = 0.72f
+        private const val RECOVERY_MIN_VOTES = 4
+        private const val RECOVERY_MIN_SHARE = 0.65f
+        private const val MIN_NOTE_LENGTH_HOPS = 20      // ~107 ms refractory period
+        private const val MIN_LEGATO_HOPS = 20           // ~107 ms before legato pitch change
+        private const val LEGATO_CONFIRM_VOTES = 5
+        private const val LEGATO_CONFIRM_SHARE = 0.70f
+        private const val LEGATO_MIN_CONFIDENCE = 0.78f
+        private const val OCTAVE_DECAY_RMS_RATIO = 0.45f
+        private const val REATTACK_HISTORY_HOPS = 8
+        private const val MULTI_HOP_REATTACK_RATIO = 1.65f
     }
 }
