@@ -47,7 +47,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
-import dev.lofrancolabs.pianopiano.model.InputSource
+import dev.lofrancolabs.pianopiano.model.MicSensitivity
+import dev.lofrancolabs.pianopiano.model.MicSourceMode
 import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
@@ -66,17 +67,18 @@ fun MainScreen(
     onNextExercise: () -> Unit,
     onSelectNoteNaming: (NoteNamingSystem) -> Unit,
     onAdjustBpm: (Int) -> Unit,
-    onSetInputSource: (InputSource) -> Unit,
+    onSelectSensitivity: (MicSensitivity) -> Unit,
+    onSelectMicSourceMode: (MicSourceMode) -> Unit,
     onRequestMicPermission: () -> Unit,
     onCalibrate: () -> Unit,
+    onClearDetectedNotes: () -> Unit,
     onPreview: () -> Unit,
     onStartOrStopPractice: () -> Unit,
-    onTouchKeyDown: (Int) -> Unit,
-    onTouchKeyUp: (Int) -> Unit,
     onNextExerciseSummary: () -> Unit,
     onDismissSummary: () -> Unit
 ) {
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showDetectionTestDialog by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
 
@@ -97,15 +99,9 @@ fun MainScreen(
                     onSelectDifficulty(diff)
                 },
                 onAdjustBpm = onAdjustBpm,
-                onSelectInputSource = { src ->
-                    onSetInputSource(src)
-                    if (src == InputSource.MICROPHONE && !uiState.hasMicPermission) {
-                        onRequestMicPermission()
-                    }
-                },
-                onCalibrate = {
+                onOpenDetectionTest = {
                     coroutineScope.launch { drawerState.close() }
-                    if (!uiState.hasMicPermission) onRequestMicPermission() else onCalibrate()
+                    showDetectionTestDialog = true
                 },
                 onOpenAbout = {
                     coroutineScope.launch { drawerState.close() }
@@ -157,16 +153,13 @@ fun MainScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    val modeLabel = if (uiState.inputSource == InputSource.MICROPHONE) "Mic" else "Touch"
-                    val heardSuffix = if (uiState.inputSource == InputSource.MICROPHONE && uiState.heardMidi != null) {
-                        " • ${MidiUtils.midiToName(uiState.heardMidi, uiState.noteNaming)}"
-                    } else {
-                        ""
-                    }
-                    val subtitleText = uiState.statusMessage ?: "${uiState.bpm} BPM • $modeLabel$heardSuffix"
+                    val heardSuffix = uiState.heardMidi?.let { midi ->
+                        " • ${MidiUtils.midiToName(midi, uiState.noteNaming)}"
+                    }.orEmpty()
+                    val subtitleText = uiState.statusMessage ?: "${uiState.bpm} BPM$heardSuffix"
                     val subtitleColor = when {
                         uiState.statusMessage != null -> PianoColors.WarmGold
-                        uiState.inputSource == InputSource.MICROPHONE && uiState.heardMidi != null -> PianoColors.Emerald
+                        uiState.heardMidi != null -> PianoColors.Emerald
                         else -> PianoColors.TextMuted
                     }
                     Text(
@@ -194,8 +187,8 @@ fun MainScreen(
                 )
             }
 
-            // Permission rationale banner only when Mic mode lacks permission
-            if (uiState.inputSource == InputSource.MICROPHONE && !uiState.hasMicPermission) {
+            // Permission rationale banner when Microphone lacks permission
+            if (!uiState.hasMicPermission) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -207,7 +200,7 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Allow Microphone access to listen to your piano, or switch to Touch in the menu.",
+                        text = "Allow Microphone access so Piano Piano can listen to your acoustic piano.",
                         style = MaterialTheme.typography.bodySmall,
                         color = PianoColors.TextPrimary,
                         modifier = Modifier.weight(1f)
@@ -233,7 +226,7 @@ fun MainScreen(
             ) {
                 Button(
                     onClick = {
-                        if (uiState.inputSource == InputSource.MICROPHONE && !uiState.hasMicPermission) {
+                        if (!uiState.hasMicPermission) {
                             onRequestMicPermission()
                         } else {
                             onStartOrStopPractice()
@@ -313,21 +306,18 @@ fun MainScreen(
                     .weight(1.45f)
             )
 
-            // Bottom Dock: Interactive 2-Octave Piano Keyboard (C3 - C5)
+            // Bottom Dock: Visual 2-Octave Piano Keyboard Guide (C3 - C5)
             val activeHoldEval = uiState.evaluations.lastOrNull {
                 it.activeHoldStartMs != null && it.activeHoldEndMs == null
             }
             InteractivePianoKeyboard(
                 expectedMidi = uiState.expectedTargetMidi,
-                heardMidi = if (uiState.inputSource == InputSource.MICROPHONE) uiState.heardMidi else null,
-                activeTouchMidis = uiState.activeTouchMidis,
+                heardMidi = uiState.heardMidi,
                 previewActiveMidi = uiState.previewActiveMidi,
                 isPlaying = uiState.phase == SessionPhase.PLAYING,
                 heldCorrectMidi = activeHoldEval?.takeIf { it.pitchVerdict == PitchVerdict.CORRECT }?.playedMidi,
                 heldWrongMidi = activeHoldEval?.takeIf { it.pitchVerdict == PitchVerdict.WRONG_KEY }?.playedMidi,
                 noteNaming = uiState.noteNaming,
-                onKeyDown = onTouchKeyDown,
-                onKeyUp = onTouchKeyUp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(0.95f)
@@ -350,5 +340,17 @@ fun MainScreen(
 
     if (showAboutDialog) {
         AboutPrivacyDialog(onDismiss = { showAboutDialog = false })
+    }
+
+    if (showDetectionTestDialog) {
+        NoteDetectionTestDialog(
+            uiState = uiState,
+            onRequestMicPermission = onRequestMicPermission,
+            onSelectSensitivity = onSelectSensitivity,
+            onSelectSourceMode = onSelectMicSourceMode,
+            onCalibrate = onCalibrate,
+            onClearDetectedNotes = onClearDetectedNotes,
+            onDismiss = { showDetectionTestDialog = false }
+        )
     }
 }

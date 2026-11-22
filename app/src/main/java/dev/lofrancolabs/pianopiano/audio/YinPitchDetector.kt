@@ -18,12 +18,13 @@ class YinPitchDetector(
     private val sampleRate: Int = 48_000,
     val windowSize: Int = 1024,
     private val yinThreshold: Float = 0.16f,
-    private val minRms: Float = 0.008f
+    private val minRms: Float = 0.0015f
 ) {
     private val halfWindow = windowSize / 2
     private val minTau = (sampleRate / 1850f).toInt().coerceAtLeast(2)
     private val maxTau = (sampleRate / 85f).toInt().coerceAtMost(halfWindow - 2)
 
+    private val normalizedBuffer = FloatArray(windowSize)
     private val diffBuffer = FloatArray(maxTau + 1)
     private val cmndBuffer = FloatArray(maxTau + 1)
 
@@ -31,18 +32,27 @@ class YinPitchDetector(
         require(samples.size >= windowSize) { "Expected at least $windowSize samples, got ${samples.size}" }
 
         var sumSq = 0.0
+        var maxAbs = 0f
         for (i in 0 until windowSize) {
-            val s = samples[i].toDouble()
+            val sample = samples[i]
+            val absSample = kotlin.math.abs(sample)
+            if (absSample > maxAbs) maxAbs = absSample
+            val s = sample.toDouble()
             sumSq += s * s
         }
         val rms = sqrt(sumSq / windowSize).toFloat()
-        if (rms < minRms) return null
+        if (rms < minRms || maxAbs < 1e-6f) return null
 
-        // Step 1: Difference function
+        val invPeak = 1f / maxAbs
+        for (i in 0 until windowSize) {
+            normalizedBuffer[i] = samples[i] * invPeak
+        }
+
+        // Step 1: Difference function on peak-normalized samples for numeric stability on quiet mic input
         for (tau in 1..maxTau) {
             var sum = 0f
             for (i in 0 until halfWindow) {
-                val delta = samples[i] - samples[i + tau]
+                val delta = normalizedBuffer[i] - normalizedBuffer[i + tau]
                 sum += delta * delta
             }
             diffBuffer[tau] = sum

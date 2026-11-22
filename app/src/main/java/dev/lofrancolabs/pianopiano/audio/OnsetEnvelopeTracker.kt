@@ -1,5 +1,6 @@
 package dev.lofrancolabs.pianopiano.audio
 
+import dev.lofrancolabs.pianopiano.model.MicSensitivity
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -24,9 +25,13 @@ class OnsetEnvelopeTracker(
     private val analysisWindow = FloatArray(windowSize)
 
     private var state = State.IDLE
-    private var noiseFloorRms = 0.004f
-    private var onsetThreshold = 0.018f
-    private var offsetThreshold = 0.008f
+    private var noiseFloorRms = 0.002f
+    private var sensitivityMultiplier = MicSensitivity.NORMAL.thresholdMultiplier
+
+    var currentOnsetThreshold: Float = 0.006f
+        private set
+    var currentOffsetThreshold: Float = 0.003f
+        private set
 
     private var prevRms = 0f
     private var settleHops = 0
@@ -36,18 +41,28 @@ class OnsetEnvelopeTracker(
     private var activeMidi = -1
     private var candidateLegatoMidi = -1
     private var candidateLegatoHops = 0
+    private var waitForQuietAfterReject = false
+    private var livePitchHopCounter = 0
+    private var livePitchQuietHops = 0
 
     var currentRms: Float = 0f
         private set
     var currentMidi: Int? = null
+        private set
+    var currentPitchEstimate: PitchEstimate? = null
         private set
 
     init {
         recomputeThresholds()
     }
 
+    fun setSensitivity(sensitivity: MicSensitivity) {
+        sensitivityMultiplier = sensitivity.thresholdMultiplier
+        recomputeThresholds()
+    }
+
     fun setNoiseFloor(measuredNoiseRms: Float) {
-        noiseFloorRms = measuredNoiseRms.coerceIn(0.003f, 0.08f)
+        noiseFloorRms = measuredNoiseRms.coerceIn(0.001f, 0.05f)
         recomputeThresholds()
     }
 
@@ -64,8 +79,12 @@ class OnsetEnvelopeTracker(
         activeMidi = -1
         candidateLegatoMidi = -1
         candidateLegatoHops = 0
+        waitForQuietAfterReject = false
+        livePitchHopCounter = 0
+        livePitchQuietHops = 0
         currentRms = 0f
         currentMidi = null
+        currentPitchEstimate = null
     }
 
     fun processHop(hopSamples: FloatArray, timestampMs: Long) {
@@ -78,9 +97,33 @@ class OnsetEnvelopeTracker(
         val rms = YinPitchDetector.computeRms(hopSamples, hopSize)
         currentRms = rms
 
+        val liveGate = max(currentOffsetThreshold * 0.65f, 0.002f)
+        if (rms >= liveGate) {
+            livePitchQuietHops = 0
+            livePitchHopCounter++
+            if (livePitchHopCounter >= LIVE_PITCH_HOP_INTERVAL) {
+                livePitchHopCounter = 0
+                val liveEstimate = pitchDetector.detect(analysisWindow)
+                if (liveEstimate != null) {
+                    currentPitchEstimate = liveEstimate
+                }
+            }
+        } else {
+            livePitchHopCounter = 0
+            livePitchQuietHops++
+            if (livePitchQuietHops >= QUIET_HOPS_TO_RELEASE) {
+                currentPitchEstimate = null
+            }
+        }
+
         when (state) {
             State.IDLE -> {
-                if (rms >= onsetThreshold && (prevRms <= offsetThreshold || rms >= prevRms * 1.35f)) {
+                if (rms < currentOffsetThreshold) {
+                    waitForQuietAfterReject = false
+                }
+                if (rms >= currentOnsetThreshold &&
+                    (!waitForQuietAfterReject || rms >= prevRms * REATTACK_RATIO)
+                ) {
                     state = State.ATTACK_SETTLING
                     pendingOnsetMs = timestampMs
                     settleHops = 1
@@ -92,21 +135,25 @@ class OnsetEnvelopeTracker(
             State.ATTACK_SETTLING -> {
                 settleHops++
                 hopsSinceOnset++
-                if (rms < offsetThreshold * 0.7f && settleHops >= 4) {
+                if (rms < currentOffsetThreshold * 0.7f && settleHops >= 4) {
                     state = State.IDLE
+                    waitForQuietAfterReject = false
                     currentMidi = null
                 } else if (settleHops >= SETTLE_HOPS_REQUIRED) {
                     val estimate = pitchDetector.detect(analysisWindow)
                     if (estimate != null) {
+                        currentPitchEstimate = estimate
                         activeMidi = estimate.midiNote
                         currentMidi = estimate.midiNote
                         state = State.SUSTAINING
+                        waitForQuietAfterReject = false
                         quietHops = 0
                         candidateLegatoMidi = -1
                         candidateLegatoHops = 0
                         onNoteOn(estimate.midiNote, pendingOnsetMs)
                     } else if (settleHops >= MAX_SETTLE_HOPS) {
                         state = State.IDLE
+                        waitForQuietAfterReject = true
                         currentMidi = null
                     }
                 }
@@ -116,13 +163,14 @@ class OnsetEnvelopeTracker(
                 hopsSinceOnset++
 
                 // 1) Check energy decay (damper release)
-                if (rms < offsetThreshold) {
+                if (rms < currentOffsetThreshold) {
                     quietHops++
                     if (quietHops >= QUIET_HOPS_TO_RELEASE) {
                         val releasedMidi = activeMidi
                         activeMidi = -1
                         currentMidi = null
                         state = State.IDLE
+                        waitForQuietAfterReject = false
                         onNoteOff(releasedMidi, timestampMs)
                         prevRms = rms
                         return
@@ -133,7 +181,7 @@ class OnsetEnvelopeTracker(
 
                 // 2) Check re-attack spike (same key struck again or sharper louder note)
                 if (hopsSinceOnset >= MIN_NOTE_LENGTH_HOPS &&
-                    rms >= onsetThreshold &&
+                    rms >= currentOnsetThreshold &&
                     rms >= prevRms * REATTACK_RATIO
                 ) {
                     val prevMidi = activeMidi
@@ -152,7 +200,7 @@ class OnsetEnvelopeTracker(
                 }
 
                 // 3) Check stable legato pitch change
-                if (hopsSinceOnset >= MIN_LEGATO_HOPS && rms >= offsetThreshold) {
+                if (hopsSinceOnset >= MIN_LEGATO_HOPS && rms >= currentOffsetThreshold) {
                     val estimate = pitchDetector.detect(analysisWindow)
                     if (estimate != null && estimate.confidence >= 0.72f) {
                         if (abs(estimate.midiNote - activeMidi) >= 1) {
@@ -168,6 +216,7 @@ class OnsetEnvelopeTracker(
                                 onNoteOff(prevMidi, timestampMs)
                                 activeMidi = newMidi
                                 currentMidi = newMidi
+                                currentPitchEstimate = estimate
                                 hopsSinceOnset = 0
                                 candidateLegatoMidi = -1
                                 candidateLegatoHops = 0
@@ -186,14 +235,15 @@ class OnsetEnvelopeTracker(
     }
 
     private fun recomputeThresholds() {
-        onsetThreshold = max(noiseFloorRms * 4.5f, 0.018f)
-        offsetThreshold = max(noiseFloorRms * 1.9f, 0.008f)
+        currentOnsetThreshold = max(noiseFloorRms * 3.0f, 0.006f) * sensitivityMultiplier
+        currentOffsetThreshold = max(noiseFloorRms * 1.5f, 0.003f) * sensitivityMultiplier
     }
 
     companion object {
         private const val SETTLE_HOPS_REQUIRED = 4   // 1024 samples (~21.3 ms) so YIN sees only post-onset audio
         private const val MAX_SETTLE_HOPS = 8        // ~43 ms max wait for pitch lock
         private const val QUIET_HOPS_TO_RELEASE = 4  // ~21 ms below sustain floor
+        private const val LIVE_PITCH_HOP_INTERVAL = 4 // ~21 ms continuous pitch refresh for diagnostics
         private const val MIN_NOTE_LENGTH_HOPS = 8   // ~43 ms refractory period
         private const val MIN_LEGATO_HOPS = 7
         private const val LEGATO_CONFIRM_HOPS = 3

@@ -38,6 +38,19 @@ class YinPitchDetectorTest {
     }
 
     @Test
+    fun detectsQuietPianoWaveform() {
+        val f0 = MidiUtils.midiToFrequency(60)
+        // Peak ~0.004 (~ -48 dBFS, RMS ~0.0028) - typical unamplified acoustic distance
+        val quietBuffer = FloatArray(detector.windowSize) { idx ->
+            val t = idx.toDouble() / sampleRate
+            (0.004 * (sin(2.0 * PI * f0 * t) + 0.3 * sin(2.0 * PI * f0 * 2.0 * t))).toFloat()
+        }
+        val result = detector.detect(quietBuffer)
+        assertNotNull("Expected YIN to detect quiet C4 waveform", result)
+        assertEquals(60, result!!.midiNote)
+    }
+
+    @Test
     fun silenceReturnsNull() {
         val silence = FloatArray(detector.windowSize) { 0f }
         assertNull(detector.detect(silence))

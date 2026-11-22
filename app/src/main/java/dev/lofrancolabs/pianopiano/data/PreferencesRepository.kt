@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.core.content.edit
 import dev.lofrancolabs.pianopiano.domain.PlayerProgress
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
+import dev.lofrancolabs.pianopiano.model.MicSensitivity
+import dev.lofrancolabs.pianopiano.model.MicSourceMode
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 
 class PreferencesRepository(context: Context) {
@@ -49,6 +51,26 @@ class PreferencesRepository(context: Context) {
         return current
     }
 
+    fun loadMicSensitivity(): MicSensitivity {
+        val raw = prefs.getString(KEY_MIC_SENSITIVITY, MicSensitivity.NORMAL.name)
+        return runCatching { MicSensitivity.valueOf(raw ?: MicSensitivity.NORMAL.name) }
+            .getOrDefault(MicSensitivity.NORMAL)
+    }
+
+    fun saveMicSensitivity(sensitivity: MicSensitivity) {
+        prefs.edit { putString(KEY_MIC_SENSITIVITY, sensitivity.name) }
+    }
+
+    fun loadMicSourceMode(): MicSourceMode {
+        val raw = prefs.getString(KEY_MIC_SOURCE_MODE, MicSourceMode.RAW.name)
+        return runCatching { MicSourceMode.valueOf(raw ?: MicSourceMode.RAW.name) }
+            .getOrDefault(MicSourceMode.RAW)
+    }
+
+    fun saveMicSourceMode(mode: MicSourceMode) {
+        prefs.edit { putString(KEY_MIC_SOURCE_MODE, mode.name) }
+    }
+
     companion object {
         private const val PREFS_NAME = "piano_piano_prefs"
         private const val KEY_NOTE_NAMING = "note_naming"
@@ -56,5 +78,7 @@ class PreferencesRepository(context: Context) {
         private const val KEY_TOTAL_XP = "total_xp"
         private const val KEY_EXERCISES_COMPLETED = "exercises_completed"
         private const val KEY_RANDOM_SEQ = "random_seq"
+        private const val KEY_MIC_SENSITIVITY = "mic_sensitivity"
+        private const val KEY_MIC_SOURCE_MODE = "mic_source_mode"
     }
 }

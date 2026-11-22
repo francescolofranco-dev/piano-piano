@@ -93,9 +93,18 @@ data class Exercise(
         get() = notes.maxOfOrNull { it.startBeat + it.durationBeats } ?: 0f
 }
 
-enum class InputSource {
-    MICROPHONE,
-    TOUCH_PIANO
+enum class MicSensitivity(
+    val label: String,
+    val thresholdMultiplier: Float
+) {
+    LOW("Low", 1.8f),
+    NORMAL("Normal", 1.0f),
+    HIGH("High", 0.5f)
+}
+
+enum class MicSourceMode(val label: String) {
+    RAW("Raw"),
+    STANDARD("Standard")
 }
 
 enum class SessionPhase {

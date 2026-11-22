@@ -6,17 +6,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerId
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
@@ -34,19 +30,14 @@ private data class BlackKeySpec(val midi: Int, val leftWhiteIndex: Int)
 fun InteractivePianoKeyboard(
     expectedMidi: Int?,
     heardMidi: Int?,
-    activeTouchMidis: Set<Int>,
     previewActiveMidi: Int?,
     isPlaying: Boolean,
     heldCorrectMidi: Int?,
     heldWrongMidi: Int?,
     noteNaming: NoteNamingSystem,
-    onKeyDown: (Int) -> Unit,
-    onKeyUp: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val latestOnKeyDown by rememberUpdatedState(onKeyDown)
-    val latestOnKeyUp by rememberUpdatedState(onKeyUp)
 
     // 2 full octaves: C3 (48) to C5 (72)
     val whiteKeys = remember {
@@ -85,78 +76,12 @@ fun InteractivePianoKeyboard(
         TextStyle(color = PianoColors.TargetBlue, fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
     }
 
-    fun resolveKeyAt(
-        position: Offset,
-        canvasWidth: Float,
-        canvasHeight: Float
-    ): Int? {
-        if (position.x < 0f || position.x > canvasWidth || position.y < 0f || position.y > canvasHeight) {
-            return null
-        }
-        val whiteWidth = canvasWidth / whiteKeys.size.toFloat()
-        val blackWidth = whiteWidth * 0.62f
-        val blackHeight = canvasHeight * 0.58f
-
-        if (position.y <= blackHeight) {
-            for (bk in blackKeys) {
-                val centerX = (bk.leftWhiteIndex + 1) * whiteWidth
-                val left = centerX - blackWidth / 2f
-                val right = centerX + blackWidth / 2f
-                if (position.x in left..right) {
-                    return bk.midi
-                }
-            }
-        }
-
-        val whiteIdx = (position.x / whiteWidth).toInt().coerceIn(0, whiteKeys.lastIndex)
-        return whiteKeys[whiteIdx].midi
-    }
-
     Canvas(
         modifier = modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(14.dp))
             .background(PianoColors.Background)
             .border(1.dp, PianoColors.Border, RoundedCornerShape(14.dp))
-            .pointerInput(whiteKeys, blackKeys) {
-                val activePointers = mutableMapOf<PointerId, Int>()
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val w = size.width.toFloat()
-                        val h = size.height.toFloat()
-
-                        for (change in event.changes) {
-                            val id = change.id
-                            if (change.pressed) {
-                                val midiAtPoint = resolveKeyAt(change.position, w, h)
-                                val previousMidi = activePointers[id]
-                                if (midiAtPoint != previousMidi) {
-                                    if (previousMidi != null) {
-                                        activePointers.remove(id)
-                                        if (previousMidi !in activePointers.values) {
-                                            latestOnKeyUp(previousMidi)
-                                        }
-                                    }
-                                    if (midiAtPoint != null) {
-                                        val alreadyHeld = midiAtPoint in activePointers.values
-                                        activePointers[id] = midiAtPoint
-                                        if (!alreadyHeld) {
-                                            latestOnKeyDown(midiAtPoint)
-                                        }
-                                    }
-                                }
-                                change.consume()
-                            } else {
-                                val previousMidi = activePointers.remove(id)
-                                if (previousMidi != null && previousMidi !in activePointers.values) {
-                                    latestOnKeyUp(previousMidi)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
     ) {
         val whiteWidth = size.width / whiteKeys.size.toFloat()
         val keyGap = 1.5.dp.toPx()
@@ -164,9 +89,8 @@ fun InteractivePianoKeyboard(
         val blackHeight = size.height * 0.58f
 
         fun activeKeyColor(midi: Int): Color? {
-            val isPressedOrHeard = (midi in activeTouchMidis) || (midi == heardMidi)
             if (midi == previewActiveMidi) return PianoColors.TargetBlue
-            if (isPressedOrHeard) {
+            if (midi == heardMidi) {
                 return when {
                     !isPlaying -> PianoColors.WarmGold
                     midi == heldCorrectMidi -> PianoColors.Emerald

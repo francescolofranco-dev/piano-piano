@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.lofrancolabs.pianopiano.audio.AudioCaptureEngine
+import dev.lofrancolabs.pianopiano.audio.AudioMonitorSnapshot
 import dev.lofrancolabs.pianopiano.audio.PianoSynthesizer
 import dev.lofrancolabs.pianopiano.data.PreferencesRepository
 import dev.lofrancolabs.pianopiano.domain.ExerciseGenerator
@@ -15,7 +16,8 @@ import dev.lofrancolabs.pianopiano.domain.XpReward
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
 import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.ExerciseSummary
-import dev.lofrancolabs.pianopiano.model.InputSource
+import dev.lofrancolabs.pianopiano.model.MicSensitivity
+import dev.lofrancolabs.pianopiano.model.MicSourceMode
 import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
@@ -31,12 +33,18 @@ import kotlinx.coroutines.launch
 import kotlin.math.floor
 import kotlin.math.roundToLong
 
+data class DetectedNoteEvent(
+    val midi: Int,
+    val timestampMs: Long
+)
+
 data class PianoPianoUiState(
     val selectedExercise: Exercise,
     val bpm: Int = selectedExercise.defaultBpm,
-    val inputSource: InputSource = InputSource.MICROPHONE,
     val noteNaming: NoteNamingSystem = NoteNamingSystem.ENGLISH,
     val randomDifficulty: BeginnerDifficulty = BeginnerDifficulty.BEGINNER,
+    val micSensitivity: MicSensitivity = MicSensitivity.NORMAL,
+    val micSourceMode: MicSourceMode = MicSourceMode.RAW,
     val playerProgress: PlayerProgress = PlayerProgress(),
     val lastXpReward: XpReward? = null,
     val hasMicPermission: Boolean = false,
@@ -46,10 +54,11 @@ data class PianoPianoUiState(
     val beatFlashAlpha: Float = 0f,
     val micLevel: Float = 0f,
     val heardMidi: Int? = null,
-    val activeTouchMidis: Set<Int> = emptySet(),
+    val audioMonitor: AudioMonitorSnapshot = AudioMonitorSnapshot(),
+    val recentDetectedNotes: List<DetectedNoteEvent> = emptyList(),
     val previewActiveMidi: Int? = null,
     val expectedTargetMidi: Int? = selectedExercise.notes.firstOrNull { !it.isRest }?.midiNote,
-    val calibratedNoiseFloor: Float = 0.004f,
+    val calibratedNoiseFloor: Float = 0.002f,
     val statusMessage: String? = null,
     val evaluations: List<NoteEvaluation> = emptyList(),
     val summary: ExerciseSummary? = null
@@ -64,6 +73,8 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     private fun loadInitialState(): PianoPianoUiState {
         val naming = prefs.loadNoteNaming()
         val difficulty = prefs.loadRandomDifficulty()
+        val sensitivity = prefs.loadMicSensitivity()
+        val sourceMode = prefs.loadMicSourceMode()
         val progress = prefs.loadProgress()
         val initialExercise = ExerciseGenerator.generate(
             difficulty = difficulty,
@@ -74,6 +85,8 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             bpm = initialExercise.defaultBpm,
             noteNaming = naming,
             randomDifficulty = difficulty,
+            micSensitivity = sensitivity,
+            micSourceMode = sourceMode,
             playerProgress = progress,
             expectedTargetMidi = initialExercise.notes.firstOrNull { !it.isRest }?.midiNote
         )
@@ -84,8 +97,13 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         context = application.applicationContext,
         onNoteOn = { midi, timestampMs -> handleMicNoteOn(midi, timestampMs) },
         onNoteOff = { midi, timestampMs -> handleMicNoteOff(midi, timestampMs) },
-        onMonitorUpdate = { rms, heardMidi -> handleMicMonitor(rms, heardMidi) }
+        onMonitorUpdate = { snapshot -> handleMicMonitor(snapshot) }
     )
+
+    init {
+        captureEngine.setSensitivity(_uiState.value.micSensitivity)
+        captureEngine.setSourceMode(_uiState.value.micSourceMode)
+    }
 
     @Volatile
     private var activeJudge: ExerciseJudge? = null
@@ -98,19 +116,16 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     fun onPermissionChanged(granted: Boolean) {
         val current = _uiState.value
         _uiState.update { it.copy(hasMicPermission = granted) }
-        if (granted && current.inputSource == InputSource.MICROPHONE && current.phase == SessionPhase.IDLE) {
+        if (granted && current.phase != SessionPhase.PREVIEWING) {
             captureEngine.start()
-        } else if (!granted && current.inputSource == InputSource.MICROPHONE) {
+        } else if (!granted) {
             captureEngine.stop()
         }
     }
 
     fun onResume() {
         val state = _uiState.value
-        if (state.inputSource == InputSource.MICROPHONE &&
-            state.hasMicPermission &&
-            state.phase != SessionPhase.PREVIEWING
-        ) {
+        if (state.hasMicPermission && state.phase != SessionPhase.PREVIEWING) {
             captureEngine.start()
         }
     }
@@ -164,11 +179,11 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun startPracticeIfReady() {
         val state = _uiState.value
-        if (state.inputSource == InputSource.TOUCH_PIANO || state.hasMicPermission) {
+        if (state.hasMicPermission) {
             startPractice()
         } else {
             _uiState.update {
-                it.copy(statusMessage = "Loaded ${state.selectedExercise.title}. Allow Mic or switch to Touch to play.")
+                it.copy(statusMessage = "Loaded ${state.selectedExercise.title}. Allow Mic to practice.")
             }
         }
     }
@@ -182,15 +197,20 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun setInputSource(source: InputSource) {
-        stopActiveSession(keepSummary = false)
-        _uiState.update { it.copy(inputSource = source, statusMessage = null) }
-        if (source == InputSource.MICROPHONE && _uiState.value.hasMicPermission) {
-            captureEngine.start()
-        } else {
-            captureEngine.stop()
-            _uiState.update { it.copy(micLevel = 0f, heardMidi = null) }
-        }
+    fun setMicSensitivity(sensitivity: MicSensitivity) {
+        prefs.saveMicSensitivity(sensitivity)
+        captureEngine.setSensitivity(sensitivity)
+        _uiState.update { it.copy(micSensitivity = sensitivity) }
+    }
+
+    fun setMicSourceMode(mode: MicSourceMode) {
+        prefs.saveMicSourceMode(mode)
+        captureEngine.setSourceMode(mode)
+        _uiState.update { it.copy(micSourceMode = mode) }
+    }
+
+    fun clearRecentDetectedNotes() {
+        _uiState.update { it.copy(recentDetectedNotes = emptyList()) }
     }
 
     fun startCalibration() {
@@ -201,7 +221,6 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         stopActiveSession(keepSummary = false)
         _uiState.update {
             it.copy(
-                inputSource = InputSource.MICROPHONE,
                 phase = SessionPhase.CALIBRATING,
                 statusMessage = "Keep quiet for 1.5s to measure room noise..."
             )
@@ -303,7 +322,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
                 val updated = _uiState.value
-                if (updated.inputSource == InputSource.MICROPHONE && updated.hasMicPermission) {
+                if (updated.hasMicPermission) {
                     captureEngine.start()
                 }
             }
@@ -317,15 +336,13 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
 
-        if (state.inputSource == InputSource.MICROPHONE) {
-            if (!state.hasMicPermission) {
-                _uiState.update { it.copy(statusMessage = "Please allow microphone access or switch to Touch Piano.") }
-                return
-            }
-            if (!captureEngine.start()) {
-                _uiState.update { it.copy(statusMessage = "Could not open microphone. Try Touch Piano mode.") }
-                return
-            }
+        if (!state.hasMicPermission) {
+            _uiState.update { it.copy(statusMessage = "Please allow microphone access to listen to your piano.") }
+            return
+        }
+        if (!captureEngine.start()) {
+            _uiState.update { it.copy(statusMessage = "Could not open microphone.") }
+            return
         }
 
         stopActiveSession(keepSummary = false)
@@ -339,7 +356,8 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
 
         val judge = ExerciseJudge(exercise = exercise, bpm = bpm, exerciseStartMs = exerciseStartMs)
         activeJudge = judge
-        judgeAcceptWindowStartMs = exerciseStartMs - maxOf(250L, (0.45 * msPerBeat).roundToLong())
+        val acceptWindowStart = exerciseStartMs - maxOf(250L, (0.45 * msPerBeat).roundToLong())
+        judgeAcceptWindowStartMs = acceptWindowStart
 
         val firstNoteLabel = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote
             ?.let { m -> MidiUtils.midiToName(m, state.noteNaming) } ?: "first note"
@@ -358,12 +376,16 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
 
         sessionJob = viewModelScope.launch {
             var lastCountInBeatTriggered = 0
-            var lastPlayBeatTriggered = -1
+            var hasResetBeforeAcceptWindow = false
             val exerciseEndMs = exerciseStartMs + (exercise.totalBeats * msPerBeat).roundToLong() + 450L
 
             try {
                 while (isActive) {
                     val now = nowMs()
+                    if (!hasResetBeforeAcceptWindow && now >= acceptWindowStart - 60L) {
+                        hasResetBeforeAcceptWindow = true
+                        captureEngine.resetTracker()
+                    }
                     val beatPos = ((now - exerciseStartMs) / msPerBeat).toFloat()
                     val phase = if (now < exerciseStartMs) SessionPhase.COUNT_IN else SessionPhase.PLAYING
 
@@ -386,15 +408,6 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                             )
                         }
                     } else {
-                        val beatIdx = floor(beatPos).toInt()
-                        if (beatIdx > lastPlayBeatTriggered && beatIdx < exercise.totalBeats.toInt()) {
-                            lastPlayBeatTriggered = beatIdx
-                            // Visual-only metronome during Microphone listening so speaker ticks don't cause false mic onsets
-                            if (_uiState.value.inputSource == InputSource.TOUCH_PIANO) {
-                                synthesizer.triggerMetronome(accent = (beatIdx % exercise.beatsPerBar) == 0)
-                            }
-                        }
-
                         judge.tick(now)
                         val beatFrac = (beatPos - floor(beatPos)).coerceIn(0f, 1f)
                         val flash = if (beatFrac < 0.25f) 1f - (beatFrac / 0.25f) else 0f
@@ -467,7 +480,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         val updated = _uiState.value
-        if (updated.inputSource == InputSource.MICROPHONE && updated.hasMicPermission) {
+        if (updated.hasMicPermission) {
             captureEngine.start()
         }
     }
@@ -489,34 +502,12 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         nextExercise(autoStart = true)
     }
 
-    fun onTouchKeyDown(midi: Int) {
-        synthesizer.noteOn(midi)
-        val ts = nowMs()
-        _uiState.update { it.copy(activeTouchMidis = it.activeTouchMidis + midi) }
-        val state = _uiState.value
-        if (state.inputSource == InputSource.TOUCH_PIANO && ts >= judgeAcceptWindowStartMs) {
-            activeJudge?.let { judge ->
-                judge.onNoteOn(midi, ts)
-                _uiState.update { it.copy(evaluations = judge.snapshot()) }
-            }
-        }
-    }
-
-    fun onTouchKeyUp(midi: Int) {
-        synthesizer.noteOff(midi)
-        val ts = nowMs()
-        _uiState.update { it.copy(activeTouchMidis = it.activeTouchMidis - midi) }
-        val state = _uiState.value
-        if (state.inputSource == InputSource.TOUCH_PIANO) {
-            activeJudge?.let { judge ->
-                judge.onNoteOff(midi, ts)
-                _uiState.update { it.copy(evaluations = judge.snapshot()) }
-            }
-        }
-    }
-
     private fun handleMicNoteOn(midi: Int, timestampMs: Long) {
-        if (_uiState.value.inputSource != InputSource.MICROPHONE) return
+        _uiState.update { state ->
+            val updatedEvents = listOf(DetectedNoteEvent(midi = midi, timestampMs = timestampMs)) +
+                state.recentDetectedNotes.take(11)
+            state.copy(recentDetectedNotes = updatedEvents)
+        }
         if (timestampMs >= judgeAcceptWindowStartMs) {
             activeJudge?.let { judge ->
                 judge.onNoteOn(midi, timestampMs)
@@ -526,16 +517,21 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun handleMicNoteOff(midi: Int, timestampMs: Long) {
-        if (_uiState.value.inputSource != InputSource.MICROPHONE) return
         activeJudge?.let { judge ->
             judge.onNoteOff(midi, timestampMs)
             _uiState.update { it.copy(evaluations = judge.snapshot()) }
         }
     }
 
-    private fun handleMicMonitor(rms: Float, heardMidi: Int?) {
-        val normalizedLevel = (rms * 10f).coerceIn(0f, 1f)
-        _uiState.update { it.copy(micLevel = normalizedLevel, heardMidi = heardMidi) }
+    private fun handleMicMonitor(snapshot: AudioMonitorSnapshot) {
+        val normalizedLevel = (snapshot.rms * 15f).coerceIn(0f, 1f)
+        _uiState.update {
+            it.copy(
+                micLevel = normalizedLevel,
+                heardMidi = snapshot.liveMidi,
+                audioMonitor = snapshot
+            )
+        }
     }
 
     private fun nowMs(): Long = SystemClock.elapsedRealtimeNanos() / 1_000_000L

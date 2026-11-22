@@ -54,15 +54,15 @@ class MainActivity : ComponentActivity() {
                     onNextExercise = { viewModel.nextExercise(autoStart = true) },
                     onSelectNoteNaming = viewModel::setNoteNaming,
                     onAdjustBpm = viewModel::adjustBpm,
-                    onSetInputSource = viewModel::setInputSource,
+                    onSelectSensitivity = viewModel::setMicSensitivity,
+                    onSelectMicSourceMode = viewModel::setMicSourceMode,
                     onRequestMicPermission = {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     },
                     onCalibrate = viewModel::startCalibration,
+                    onClearDetectedNotes = viewModel::clearRecentDetectedNotes,
                     onPreview = viewModel::startPreview,
                     onStartOrStopPractice = viewModel::startPractice,
-                    onTouchKeyDown = viewModel::onTouchKeyDown,
-                    onTouchKeyUp = viewModel::onTouchKeyUp,
                     onNextExerciseSummary = viewModel::selectNextExerciseAndCloseSummary,
                     onDismissSummary = viewModel::dismissSummary
                 )

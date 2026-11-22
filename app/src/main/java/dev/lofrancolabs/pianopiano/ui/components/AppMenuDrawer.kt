@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,12 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.Piano
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,7 +37,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
-import dev.lofrancolabs.pianopiano.model.InputSource
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.ui.PianoPianoUiState
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
@@ -50,14 +47,14 @@ fun AppMenuDrawer(
     onSelectNoteNaming: (NoteNamingSystem) -> Unit,
     onSelectDifficulty: (BeginnerDifficulty) -> Unit,
     onAdjustBpm: (Int) -> Unit,
-    onSelectInputSource: (InputSource) -> Unit,
-    onCalibrate: () -> Unit,
-    onOpenAbout: () -> Unit
+    onOpenDetectionTest: () -> Unit,
+    onOpenAbout: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     ModalDrawerSheet(
         drawerContainerColor = PianoColors.Surface,
         drawerContentColor = PianoColors.TextPrimary,
-        modifier = Modifier.width(310.dp)
+        modifier = modifier.width(310.dp)
     ) {
         Column(
             modifier = Modifier
@@ -226,48 +223,19 @@ fun AppMenuDrawer(
                 }
             }
 
-            // Input Source
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Note Detection Test
+            OutlinedButton(
+                onClick = onOpenDetectionTest,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                FilterChip(
-                    selected = uiState.inputSource == InputSource.MICROPHONE,
-                    onClick = { onSelectInputSource(InputSource.MICROPHONE) },
-                    label = { Text("Mic") },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = PianoColors.WarmGold,
-                        selectedLabelColor = PianoColors.Background,
-                        selectedLeadingIconColor = PianoColors.Background
-                    ),
-                    modifier = Modifier.weight(1f)
+                Icon(
+                    imageVector = Icons.Rounded.GraphicEq,
+                    contentDescription = null,
+                    tint = PianoColors.WarmGold,
+                    modifier = Modifier.size(18.dp)
                 )
-                FilterChip(
-                    selected = uiState.inputSource == InputSource.TOUCH_PIANO,
-                    onClick = { onSelectInputSource(InputSource.TOUCH_PIANO) },
-                    label = { Text("Touch") },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.Piano, contentDescription = null, modifier = Modifier.size(16.dp))
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = PianoColors.TargetBlue,
-                        selectedLabelColor = PianoColors.Background,
-                        selectedLeadingIconColor = PianoColors.Background
-                    ),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            if (uiState.inputSource == InputSource.MICROPHONE) {
-                OutlinedButton(
-                    onClick = onCalibrate,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Calibrate Room Noise", color = PianoColors.TextPrimary)
-                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Test Note Detection", color = PianoColors.WarmGold, fontWeight = FontWeight.SemiBold)
             }
 
             TextButton(
