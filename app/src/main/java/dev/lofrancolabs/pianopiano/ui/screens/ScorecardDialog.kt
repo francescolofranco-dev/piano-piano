@@ -34,22 +34,44 @@ import androidx.compose.ui.window.Dialog
 import dev.lofrancolabs.pianopiano.domain.XpReward
 import dev.lofrancolabs.pianopiano.model.DurationVerdict
 import dev.lofrancolabs.pianopiano.model.ExerciseSummary
-import dev.lofrancolabs.pianopiano.model.MidiUtils
-import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
+
+private data class FeedbackCountBadge(val label: String, val count: Int, val color: Color)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScorecardDialog(
     summary: ExerciseSummary,
-    noteNaming: NoteNamingSystem,
     xpReward: XpReward?,
     onRetry: () -> Unit,
     onNextExercise: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val evals = summary.evaluations
+    val summaryBadges = buildList {
+        val perfect = evals.count {
+            it.pitchVerdict == PitchVerdict.CORRECT &&
+                it.timingVerdict == TimingVerdict.PERFECT &&
+                it.durationVerdict == DurationVerdict.GOOD
+        }
+        val tooSoon = evals.count { it.timingVerdict == TimingVerdict.TOO_SOON }
+        val tooLate = evals.count { it.timingVerdict == TimingVerdict.TOO_LATE }
+        val tooShort = evals.count { it.durationVerdict == DurationVerdict.TOO_SHORT }
+        val tooLong = evals.count { it.durationVerdict == DurationVerdict.TOO_LONG }
+        val wrongKey = evals.count { it.pitchVerdict == PitchVerdict.WRONG_KEY }
+        val missed = evals.count { it.timingVerdict == TimingVerdict.MISSED }
+
+        if (perfect > 0) add(FeedbackCountBadge("Perfect", perfect, PianoColors.Emerald))
+        if (tooSoon > 0) add(FeedbackCountBadge("Too soon", tooSoon, PianoColors.Amber))
+        if (tooLate > 0) add(FeedbackCountBadge("Too late", tooLate, PianoColors.Amber))
+        if (tooShort > 0) add(FeedbackCountBadge("Too short", tooShort, PianoColors.Amber))
+        if (tooLong > 0) add(FeedbackCountBadge("Too long", tooLong, PianoColors.Coral))
+        if (wrongKey > 0) add(FeedbackCountBadge("Wrong key", wrongKey, PianoColors.Coral))
+        if (missed > 0) add(FeedbackCountBadge("Missed", missed, PianoColors.Coral))
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
@@ -167,40 +189,27 @@ fun ScorecardDialog(
                     )
                 }
 
+                Text(
+                    text = "${summary.totalNotes} notes",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = PianoColors.TextMuted
+                )
+
                 FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    summary.evaluations.forEach { eval ->
-                        val noteName = MidiUtils.midiToName(eval.expectedMidi, noteNaming)
-                        val badge = eval.feedbackBadgeText(noteNaming) ?: "OK"
-                        val chipColor = when {
-                            eval.timingVerdict == TimingVerdict.MISSED ||
-                                eval.pitchVerdict == PitchVerdict.WRONG_KEY ||
-                                eval.durationVerdict == DurationVerdict.TOO_LONG -> PianoColors.Coral
-                            eval.timingVerdict == TimingVerdict.TOO_SOON ||
-                                eval.timingVerdict == TimingVerdict.TOO_LATE ||
-                                eval.durationVerdict == DurationVerdict.TOO_SHORT -> PianoColors.Amber
-                            else -> PianoColors.Emerald
-                        }
-                        Column(
+                    summaryBadges.forEach { badge ->
+                        Text(
+                            text = "${badge.count} ${badge.label}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = badge.color,
                             modifier = Modifier
-                                .background(chipColor.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                                .border(1.dp, chipColor.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-                                .padding(horizontal = 9.dp, vertical = 5.dp)
-                        ) {
-                            Text(
-                                text = "#${eval.targetIndex + 1} $noteName",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = PianoColors.TextPrimary
-                            )
-                            Text(
-                                text = badge,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = chipColor
-                            )
-                        }
+                                .background(badge.color.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                                .border(1.dp, badge.color.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
                     }
                 }
 

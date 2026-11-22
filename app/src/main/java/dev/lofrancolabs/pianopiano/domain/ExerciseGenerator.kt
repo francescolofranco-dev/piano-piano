@@ -72,6 +72,11 @@ object ExerciseGenerator {
         listOf(1.5f, 0.5f, 2f),
         listOf(1f, 1f, 2f)
     )
+    private val phraseEndingBars = listOf(
+        listOf(1f, 1f, 2f),
+        listOf(2f, 2f),
+        listOf(1f, 1f, 1f, -1f)
+    )
 
     fun generate(
         difficulty: BeginnerDifficulty,
@@ -89,7 +94,7 @@ object ExerciseGenerator {
         when (difficulty) {
             BeginnerDifficulty.BEGINNER -> {
                 pool = beginnerPool
-                barCount = if (random.nextBoolean()) 2 else 3
+                barCount = random.nextInt(6, 9) // 6–8 bars (24–32 beats)
                 bpm = random.nextInt(68, 75)
                 barTemplates = beginnerBars
                 finalTemplates = beginnerFinalBars
@@ -99,7 +104,7 @@ object ExerciseGenerator {
 
             BeginnerDifficulty.INTERMEDIATE -> {
                 pool = intermediatePool
-                barCount = if (random.nextBoolean()) 3 else 4
+                barCount = random.nextInt(10, 13) // 10–12 bars (40–48 beats)
                 bpm = random.nextInt(74, 83)
                 barTemplates = intermediateBars
                 finalTemplates = intermediateFinalBars
@@ -109,12 +114,12 @@ object ExerciseGenerator {
 
             BeginnerDifficulty.ADVANCED -> {
                 pool = advancedBeginnerPool
-                barCount = 4
+                barCount = random.nextInt(16, 21) // 16–20 bars (64–80 beats)
                 bpm = random.nextInt(80, 91)
                 barTemplates = advancedBars
                 finalTemplates = advancedFinalBars
                 maxStep = 4
-                titlePrefix = "Adv. Beginner Drill"
+                titlePrefix = "Advanced Drill"
             }
         }
 
@@ -124,10 +129,11 @@ object ExerciseGenerator {
 
         for (barIdx in 0 until barCount) {
             val isFinalBar = barIdx == barCount - 1
-            val pattern = if (isFinalBar) {
-                finalTemplates[random.nextInt(finalTemplates.size)]
-            } else {
-                barTemplates[random.nextInt(barTemplates.size)]
+            val isPhraseEndingBar = ((barIdx + 1) % 4 == 0) && !isFinalBar
+            val pattern = when {
+                isFinalBar -> finalTemplates[random.nextInt(finalTemplates.size)]
+                isPhraseEndingBar -> phraseEndingBars[random.nextInt(phraseEndingBars.size)]
+                else -> barTemplates[random.nextInt(barTemplates.size)]
             }
 
             pattern.forEachIndexed { slotIdx, rawDuration ->
@@ -178,7 +184,6 @@ object ExerciseGenerator {
             defaultBpm = bpm,
             beatsPerBar = 4,
             difficulty = difficulty,
-            isGenerated = true,
             notes = notes
         )
     }

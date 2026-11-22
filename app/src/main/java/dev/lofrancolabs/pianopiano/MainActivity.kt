@@ -48,9 +48,8 @@ class MainActivity : ComponentActivity() {
             PianoPianoTheme {
                 MainScreen(
                     uiState = uiState,
-                    onSelectGuidedExercise = viewModel::selectGuidedExercise,
-                    onStartRandomMode = { difficulty ->
-                        viewModel.startRandomMode(difficulty, autoStart = false)
+                    onSelectDifficulty = { difficulty ->
+                        viewModel.selectDifficulty(difficulty, autoStart = false)
                     },
                     onNextExercise = { viewModel.nextExercise(autoStart = true) },
                     onSelectNoteNaming = viewModel::setNoteNaming,

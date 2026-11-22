@@ -15,14 +15,9 @@ enum class BeginnerDifficulty(
     val description: String,
     val baseXp: Int
 ) {
-    BEGINNER("Beginner", "Random • Beginner", "C4–E4 • steady quarter & half notes", 25),
-    INTERMEDIATE("Intermediate", "Random • Intermediate", "C4–G4 5-finger position • mixed holds & rests", 35),
-    ADVANCED("Advanced Beginner", "Random • Adv. Beginner", "C4–C5 • gentle skips & dotted/eighth rhythms", 50)
-}
-
-enum class PracticeMode {
-    GUIDED,
-    RANDOM
+    BEGINNER("Beginner", "Beginner", "C4–E4 • 6–8 bars", 30),
+    INTERMEDIATE("Intermediate", "Intermediate", "C4–G4 • 10–12 bars", 50),
+    ADVANCED("Advanced", "Advanced", "C4–C5 • 16–20 bars", 75)
 }
 
 object MidiUtils {
@@ -92,7 +87,6 @@ data class Exercise(
     val defaultBpm: Int,
     val beatsPerBar: Int = 4,
     val difficulty: BeginnerDifficulty = BeginnerDifficulty.BEGINNER,
-    val isGenerated: Boolean = false,
     val notes: List<NoteEvent>
 ) {
     val totalBeats: Float

@@ -18,33 +18,30 @@ class ExerciseGeneratorTest {
             val rng = Random(seed)
 
             val beg = ExerciseGenerator.generate(BeginnerDifficulty.BEGINNER, seed, rng)
-            assertTrue(beg.isGenerated)
             assertEquals(BeginnerDifficulty.BEGINNER, beg.difficulty)
             assertTrue(beg.defaultBpm in 68..74)
-            assertTrue(beg.totalBeats == 8f || beg.totalBeats == 12f)
+            assertTrue("Expected 6–8 bars (24, 28, or 32 beats), got ${beg.totalBeats}", beg.totalBeats in listOf(24f, 28f, 32f))
             assertBarAlignment(beg.notes.map { it.startBeat to it.durationBeats })
             val begPitches = beg.notes.mapNotNull { it.midiNote }
-            assertTrue(begPitches.size >= 4)
+            assertTrue(begPitches.size >= 12)
             assertTrue(begPitches.all { it in allowedBeginner })
 
             val inter = ExerciseGenerator.generate(BeginnerDifficulty.INTERMEDIATE, seed, rng)
-            assertTrue(inter.isGenerated)
             assertEquals(BeginnerDifficulty.INTERMEDIATE, inter.difficulty)
             assertTrue(inter.defaultBpm in 74..82)
-            assertTrue(inter.totalBeats == 12f || inter.totalBeats == 16f)
+            assertTrue("Expected 10–12 bars (40, 44, or 48 beats), got ${inter.totalBeats}", inter.totalBeats in listOf(40f, 44f, 48f))
             assertBarAlignment(inter.notes.map { it.startBeat to it.durationBeats })
             val interPitches = inter.notes.mapNotNull { it.midiNote }
-            assertTrue(interPitches.size >= 6)
+            assertTrue(interPitches.size >= 20)
             assertTrue(interPitches.all { it in allowedIntermediate })
 
             val adv = ExerciseGenerator.generate(BeginnerDifficulty.ADVANCED, seed, rng)
-            assertTrue(adv.isGenerated)
             assertEquals(BeginnerDifficulty.ADVANCED, adv.difficulty)
             assertTrue(adv.defaultBpm in 80..90)
-            assertEquals(16f, adv.totalBeats)
+            assertTrue("Expected 16–20 bars (64..80 beats), got ${adv.totalBeats}", adv.totalBeats in listOf(64f, 68f, 72f, 76f, 80f))
             assertBarAlignment(adv.notes.map { it.startBeat to it.durationBeats })
             val advPitches = adv.notes.mapNotNull { it.midiNote }
-            assertTrue(advPitches.size >= 8)
+            assertTrue(advPitches.size >= 36)
             assertTrue(advPitches.all { it in allowedAdvanced })
         }
     }

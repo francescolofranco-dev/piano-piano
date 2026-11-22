@@ -47,7 +47,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
-import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.InputSource
 import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
@@ -63,8 +62,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun MainScreen(
     uiState: PianoPianoUiState,
-    onSelectGuidedExercise: (Exercise) -> Unit,
-    onStartRandomMode: (BeginnerDifficulty) -> Unit,
+    onSelectDifficulty: (BeginnerDifficulty) -> Unit,
     onNextExercise: () -> Unit,
     onSelectNoteNaming: (NoteNamingSystem) -> Unit,
     onAdjustBpm: (Int) -> Unit,
@@ -94,13 +92,9 @@ fun MainScreen(
             AppMenuDrawer(
                 uiState = uiState,
                 onSelectNoteNaming = onSelectNoteNaming,
-                onSelectGuidedExercise = { exercise ->
+                onSelectDifficulty = { diff ->
                     coroutineScope.launch { drawerState.close() }
-                    onSelectGuidedExercise(exercise)
-                },
-                onSelectRandomDifficulty = { diff ->
-                    coroutineScope.launch { drawerState.close() }
-                    onStartRandomMode(diff)
+                    onSelectDifficulty(diff)
                 },
                 onAdjustBpm = onAdjustBpm,
                 onSelectInputSource = { src ->
@@ -344,7 +338,6 @@ fun MainScreen(
     uiState.summary?.let { summary ->
         ScorecardDialog(
             summary = summary,
-            noteNaming = uiState.noteNaming,
             xpReward = uiState.lastXpReward,
             onRetry = {
                 onDismissSummary()

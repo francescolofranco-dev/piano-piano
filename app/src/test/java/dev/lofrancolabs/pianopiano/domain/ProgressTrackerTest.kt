@@ -82,17 +82,17 @@ class ProgressTrackerTest {
                 )
             )
         )
-        // Advanced baseXp = 50, avgScore = 95 -> accuracyBonus = 38, excellenceBonus = 15 => 103 XP!
+        // Advanced baseXp = 75, avgScore = 95 -> accuracyBonus = 38, excellenceBonus = 15 => 128 XP!
         val reward = ProgressTracker.calculateAndApplyReward(
             current = PlayerProgress(totalXp = 60, exercisesCompleted = 2),
             summary = goodSummary,
             difficulty = BeginnerDifficulty.ADVANCED
         )
-        assertEquals(103, reward.xpEarned)
+        assertEquals(128, reward.xpEarned)
         assertTrue(reward.leveledUp)
         assertEquals(1, reward.previousLevel)
         assertEquals(2, reward.newLevel)
-        assertEquals(163, reward.updatedProgress.totalXp)
+        assertEquals(188, reward.updatedProgress.totalXp)
         assertEquals(3, reward.updatedProgress.exercisesCompleted)
     }
 }

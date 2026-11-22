@@ -5,7 +5,6 @@ import androidx.core.content.edit
 import dev.lofrancolabs.pianopiano.domain.PlayerProgress
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
-import dev.lofrancolabs.pianopiano.model.PracticeMode
 
 class PreferencesRepository(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -18,16 +17,6 @@ class PreferencesRepository(context: Context) {
 
     fun saveNoteNaming(naming: NoteNamingSystem) {
         prefs.edit { putString(KEY_NOTE_NAMING, naming.name) }
-    }
-
-    fun loadPracticeMode(): PracticeMode {
-        val raw = prefs.getString(KEY_PRACTICE_MODE, PracticeMode.GUIDED.name)
-        return runCatching { PracticeMode.valueOf(raw ?: PracticeMode.GUIDED.name) }
-            .getOrDefault(PracticeMode.GUIDED)
-    }
-
-    fun savePracticeMode(mode: PracticeMode) {
-        prefs.edit { putString(KEY_PRACTICE_MODE, mode.name) }
     }
 
     fun loadRandomDifficulty(): BeginnerDifficulty {
@@ -63,7 +52,6 @@ class PreferencesRepository(context: Context) {
     companion object {
         private const val PREFS_NAME = "piano_piano_prefs"
         private const val KEY_NOTE_NAMING = "note_naming"
-        private const val KEY_PRACTICE_MODE = "practice_mode"
         private const val KEY_RANDOM_DIFFICULTY = "random_difficulty"
         private const val KEY_TOTAL_XP = "total_xp"
         private const val KEY_EXERCISES_COMPLETED = "exercises_completed"

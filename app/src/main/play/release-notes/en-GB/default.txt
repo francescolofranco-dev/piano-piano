@@ -1,1 +1,1 @@
-Streamlined main screen and organized navigation drawer with calmer layout.
+Removed predefined exercises in favor of longer generated drills across Beginner (6–8 bars), Intermediate (10–12 bars), and Advanced (16–20 bars) tiers.

@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +18,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Piano
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Shuffle
@@ -41,10 +39,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
-import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.InputSource
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
-import dev.lofrancolabs.pianopiano.model.PracticeMode
 import dev.lofrancolabs.pianopiano.ui.PianoPianoUiState
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
 
@@ -52,8 +48,7 @@ import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
 fun AppMenuDrawer(
     uiState: PianoPianoUiState,
     onSelectNoteNaming: (NoteNamingSystem) -> Unit,
-    onSelectGuidedExercise: (Exercise) -> Unit,
-    onSelectRandomDifficulty: (BeginnerDifficulty) -> Unit,
+    onSelectDifficulty: (BeginnerDifficulty) -> Unit,
     onAdjustBpm: (Int) -> Unit,
     onSelectInputSource: (InputSource) -> Unit,
     onCalibrate: () -> Unit,
@@ -121,12 +116,11 @@ fun AppMenuDrawer(
                 )
             }
 
-            // 2. Exercises (Random Drills + Guided Drills)
-            SectionHeader(title = "Random Drills")
+            // 2. Difficulty Selection (Generates a new drill on tap)
+            SectionHeader(title = "Difficulty")
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 BeginnerDifficulty.entries.forEach { diff ->
-                    val isSelected =
-                        uiState.practiceMode == PracticeMode.RANDOM && uiState.randomDifficulty == diff
+                    val isSelected = uiState.randomDifficulty == diff
                     val borderColor = if (isSelected) PianoColors.WarmGold else PianoColors.Border
                     val bgColor = if (isSelected) {
                         PianoColors.WarmGold.copy(alpha = 0.14f)
@@ -139,8 +133,8 @@ fun AppMenuDrawer(
                             .clip(RoundedCornerShape(10.dp))
                             .background(bgColor)
                             .border(1.dp, borderColor, RoundedCornerShape(10.dp))
-                            .clickable { onSelectRandomDifficulty(diff) }
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            .clickable { onSelectDifficulty(diff) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -152,59 +146,13 @@ fun AppMenuDrawer(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (diff == BeginnerDifficulty.ADVANCED) "Advanced" else diff.label,
+                                text = diff.label,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isSelected) PianoColors.WarmGold else PianoColors.TextPrimary
                             )
                             Text(
                                 text = difficultySubtitle(diff, uiState.noteNaming),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = PianoColors.TextMuted
-                            )
-                        }
-                    }
-                }
-            }
-
-            SectionHeader(title = "Guided Drills")
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                uiState.exercises.forEach { exercise ->
-                    val isSelected =
-                        uiState.practiceMode == PracticeMode.GUIDED &&
-                            uiState.selectedExercise.id == exercise.id
-                    val borderColor = if (isSelected) PianoColors.TargetBlue else PianoColors.Border
-                    val bgColor = if (isSelected) {
-                        PianoColors.TargetBlue.copy(alpha = 0.14f)
-                    } else {
-                        PianoColors.SurfaceElevated
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(bgColor)
-                            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
-                            .clickable { onSelectGuidedExercise(exercise) }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = if (isSelected) PianoColors.TargetBlue else PianoColors.TextMuted,
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = exercise.title,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = PianoColors.TextPrimary
-                            )
-                            Text(
-                                text = exercise.subtitle,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = PianoColors.TextMuted
                             )
@@ -378,15 +326,15 @@ private fun NoteNamingChip(
 private fun difficultySubtitle(diff: BeginnerDifficulty, naming: NoteNamingSystem): String {
     return if (naming == NoteNamingSystem.ENGLISH) {
         when (diff) {
-            BeginnerDifficulty.BEGINNER -> "C4–E4 • quarter & half notes"
-            BeginnerDifficulty.INTERMEDIATE -> "C4–G4 • 5-finger position"
-            BeginnerDifficulty.ADVANCED -> "C4–C5 • skips & dotted rhythms"
+            BeginnerDifficulty.BEGINNER -> "C4–E4 • 6–8 bars"
+            BeginnerDifficulty.INTERMEDIATE -> "C4–G4 • 10–12 bars"
+            BeginnerDifficulty.ADVANCED -> "C4–C5 • 16–20 bars"
         }
     } else {
         when (diff) {
-            BeginnerDifficulty.BEGINNER -> "Do4–Mi4 • quarter & half notes"
-            BeginnerDifficulty.INTERMEDIATE -> "Do4–Sol4 • 5-finger position"
-            BeginnerDifficulty.ADVANCED -> "Do4–Do5 • skips & dotted rhythms"
+            BeginnerDifficulty.BEGINNER -> "Do4–Mi4 • 6–8 bars"
+            BeginnerDifficulty.INTERMEDIATE -> "Do4–Sol4 • 10–12 bars"
+            BeginnerDifficulty.ADVANCED -> "Do4–Do5 • 16–20 bars"
         }
     }
 }
