@@ -47,6 +47,7 @@ class AudioCaptureEngine(
 
     private val isRunning = AtomicBoolean(false)
     private val isCalibrating = AtomicBoolean(false)
+    private val pendingTrackerReset = AtomicBoolean(false)
     private var captureThread: Thread? = null
 
     @Volatile
@@ -86,7 +87,11 @@ class AudioCaptureEngine(
     }
 
     fun resetTracker() {
-        tracker.reset()
+        if (isRunning.get()) {
+            pendingTrackerReset.set(true)
+        } else {
+            tracker.reset()
+        }
     }
 
     fun start(): Boolean {
@@ -99,6 +104,7 @@ class AudioCaptureEngine(
         val audioRecord = selected.audioRecord
         val selectedGain = selected.digitalGain
         activeSourceLabel = selected.label
+        pendingTrackerReset.set(false)
         tracker.reset()
         isRunning.set(true)
 
@@ -157,6 +163,9 @@ class AudioCaptureEngine(
                         }
                         rms
                     } else {
+                        if (pendingTrackerReset.getAndSet(false)) {
+                            tracker.reset()
+                        }
                         tracker.processHop(hopBuffer, timestampMs)
                         tracker.currentRms
                     }

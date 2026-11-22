@@ -22,6 +22,7 @@ import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
 import dev.lofrancolabs.pianopiano.model.SessionPhase
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.floor
 import kotlin.math.roundToLong
 
@@ -131,9 +133,9 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun onPause() {
-        stopActiveSession(keepSummary = false)
+        stopActiveSession(keepSummary = false, restartCapture = false)
         captureEngine.stop()
-        synthesizer.allNotesOff()
+        synthesizer.stop()
     }
 
     override fun onCleared() {
@@ -243,7 +245,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             stopActiveSession(keepSummary = false)
             return
         }
-        stopActiveSession(keepSummary = false)
+        stopActiveSession(keepSummary = false, restartCapture = false)
         captureEngine.stop() // Avoid mic picking up the preview audio
 
         val exercise = state.selectedExercise
@@ -310,7 +312,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                     delay(16L)
                 }
             } finally {
-                synthesizer.allNotesOff()
+                synthesizer.stop()
                 _uiState.update {
                     it.copy(
                         phase = SessionPhase.IDLE,
@@ -340,12 +342,9 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             _uiState.update { it.copy(statusMessage = "Please allow microphone access to listen to your piano.") }
             return
         }
-        if (!captureEngine.start()) {
-            _uiState.update { it.copy(statusMessage = "Could not open microphone.") }
-            return
-        }
 
-        stopActiveSession(keepSummary = false)
+        stopActiveSession(keepSummary = false, restartCapture = false)
+        captureEngine.stop()
 
         val exercise = state.selectedExercise
         val bpm = state.bpm
@@ -353,6 +352,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         val countInBeats = 4
         val countInStartMs = nowMs()
         val exerciseStartMs = countInStartMs + (countInBeats * msPerBeat).roundToLong()
+        val beat4ClickDoneMs = countInStartMs + ((countInBeats - 1) * msPerBeat).roundToLong() + 75L
 
         val judge = ExerciseJudge(exercise = exercise, bpm = bpm, exerciseStartMs = exerciseStartMs)
         activeJudge = judge
@@ -376,23 +376,34 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
 
         sessionJob = viewModelScope.launch {
             var lastCountInBeatTriggered = 0
-            var hasResetBeforeAcceptWindow = false
+            var hasSwitchedToCapture = false
             val exerciseEndMs = exerciseStartMs + (exercise.totalBeats * msPerBeat).roundToLong() + 450L
 
             try {
                 while (isActive) {
                     val now = nowMs()
-                    if (!hasResetBeforeAcceptWindow && now >= acceptWindowStart - 60L) {
-                        hasResetBeforeAcceptWindow = true
-                        captureEngine.resetTracker()
-                    }
                     val beatPos = ((now - exerciseStartMs) / msPerBeat).toFloat()
                     val phase = if (now < exerciseStartMs) SessionPhase.COUNT_IN else SessionPhase.PLAYING
+
+                    if (!hasSwitchedToCapture &&
+                        ((lastCountInBeatTriggered >= countInBeats && now >= beat4ClickDoneMs) || phase == SessionPhase.PLAYING)
+                    ) {
+                        hasSwitchedToCapture = true
+                        val micStarted = withContext(Dispatchers.IO) {
+                            synthesizer.stop()
+                            captureEngine.start()
+                        }
+                        if (!isActive) break
+                        if (!micStarted) {
+                            _uiState.update { it.copy(statusMessage = "Could not open microphone.") }
+                            break
+                        }
+                    }
 
                     if (phase == SessionPhase.COUNT_IN) {
                         val elapsedCountInBeats = ((now - countInStartMs) / msPerBeat).toInt() + 1
                         val clampedCountIn = elapsedCountInBeats.coerceIn(1, countInBeats)
-                        if (clampedCountIn > lastCountInBeatTriggered) {
+                        if (!hasSwitchedToCapture && clampedCountIn > lastCountInBeatTriggered) {
                             lastCountInBeatTriggered = clampedCountIn
                             synthesizer.triggerMetronome(accent = clampedCountIn == 1)
                         }
@@ -454,20 +465,25 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                     delay(16L)
                 }
             } finally {
-                if (_uiState.value.phase == SessionPhase.COUNT_IN || _uiState.value.phase == SessionPhase.PLAYING) {
+                synthesizer.stop()
+                val phaseAtExit = _uiState.value.phase
+                if (phaseAtExit == SessionPhase.COUNT_IN || phaseAtExit == SessionPhase.PLAYING) {
                     activeJudge = null
                     judgeAcceptWindowStartMs = Long.MAX_VALUE
+                }
+                if (_uiState.value.hasMicPermission && phaseAtExit != SessionPhase.PREVIEWING) {
+                    captureEngine.start()
                 }
             }
         }
     }
 
-    fun stopActiveSession(keepSummary: Boolean = false) {
+    fun stopActiveSession(keepSummary: Boolean = false, restartCapture: Boolean = true) {
         sessionJob?.cancel()
         sessionJob = null
         activeJudge = null
         judgeAcceptWindowStartMs = Long.MAX_VALUE
-        synthesizer.allNotesOff()
+        synthesizer.stop()
         _uiState.update { state ->
             state.copy(
                 phase = SessionPhase.IDLE,
@@ -480,7 +496,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         val updated = _uiState.value
-        if (updated.hasMicPermission) {
+        if (restartCapture && updated.hasMicPermission) {
             captureEngine.start()
         }
     }

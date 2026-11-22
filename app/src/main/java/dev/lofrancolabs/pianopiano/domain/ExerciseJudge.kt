@@ -123,9 +123,10 @@ class ExerciseJudge(
         for (i in evaluations.indices) {
             val eval = evaluations[i]
             if (eval.timingVerdict == TimingVerdict.PENDING) {
+                val lateGraceMs = maxOf(lateGraceBaseMs, (eval.expectedDurationMs * 0.55).roundToLong())
                 val missCutoff = eval.expectedStartMs + minOf(
                     (eval.expectedDurationMs * 0.85).roundToLong(),
-                    lateGraceBaseMs
+                    lateGraceMs
                 )
                 if (nowMs > missCutoff) {
                     evaluations[i] = eval.copy(timingVerdict = TimingVerdict.MISSED)

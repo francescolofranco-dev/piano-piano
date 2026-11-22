@@ -85,4 +85,29 @@ class ExerciseJudgeTest {
         // Mean onset over 4 played notes: (20 - 110 + 130 + 0) / 4 = 10ms
         assertEquals(10, summary.averageOnsetOffsetMs)
     }
+
+    @Test
+    fun acceptsLateStrikeOnHalfNote() {
+        val halfNoteExercise = Exercise(
+            id = "half",
+            title = "Half Note Drill",
+            subtitle = "Unit test",
+            focusTag = "Test",
+            defaultBpm = 68,
+            notes = listOf(
+                NoteEvent(60, 0f, 2f)
+            )
+        )
+        val startMs = 1000L
+        val judge = ExerciseJudge(halfNoteExercise, bpm = 68, exerciseStartMs = startMs)
+
+        // +640ms past expected start on a 1765ms half note should still be pending (not missed)
+        judge.tick(startMs + 640L)
+        judge.onNoteOn(60, startMs + 650L)
+        judge.onNoteOff(60, startMs + 1900L)
+
+        val eval = judge.finish(startMs + 2200L).evaluations[0]
+        assertEquals(PitchVerdict.CORRECT, eval.pitchVerdict)
+        assertEquals(TimingVerdict.TOO_LATE, eval.timingVerdict)
+    }
 }

@@ -44,6 +44,11 @@ class OnsetEnvelopeTracker(
     private var waitForQuietAfterReject = false
     private var livePitchHopCounter = 0
     private var livePitchQuietHops = 0
+    private var consecutiveLivePitchMidi = -1
+    private var consecutiveLivePitchCount = 0
+    private val rmsHistory = FloatArray(REATTACK_HISTORY_HOPS)
+    private var rmsHistoryIndex = 0
+    private var rmsHistoryCount = 0
 
     var currentRms: Float = 0f
         private set
@@ -82,6 +87,9 @@ class OnsetEnvelopeTracker(
         waitForQuietAfterReject = false
         livePitchHopCounter = 0
         livePitchQuietHops = 0
+        consecutiveLivePitchMidi = -1
+        consecutiveLivePitchCount = 0
+        resetRmsHistory()
         currentRms = 0f
         currentMidi = null
         currentPitchEstimate = null
@@ -95,6 +103,7 @@ class OnsetEnvelopeTracker(
         System.arraycopy(hopSamples, 0, analysisWindow, windowSize - hopSize, hopSize)
 
         val rms = YinPitchDetector.computeRms(hopSamples, hopSize)
+        val minRecentRms = recentMinRms()
         currentRms = rms
 
         val liveGate = max(currentOffsetThreshold * 0.65f, 0.002f)
@@ -106,10 +115,20 @@ class OnsetEnvelopeTracker(
                 val liveEstimate = pitchDetector.detect(analysisWindow)
                 if (liveEstimate != null) {
                     currentPitchEstimate = liveEstimate
+                    if (liveEstimate.confidence >= LIVE_LOCK_CONFIDENCE) {
+                        if (liveEstimate.midiNote == consecutiveLivePitchMidi) {
+                            consecutiveLivePitchCount++
+                        } else {
+                            consecutiveLivePitchMidi = liveEstimate.midiNote
+                            consecutiveLivePitchCount = 1
+                        }
+                    }
                 }
             }
         } else {
             livePitchHopCounter = 0
+            consecutiveLivePitchMidi = -1
+            consecutiveLivePitchCount = 0
             livePitchQuietHops++
             if (livePitchQuietHops >= QUIET_HOPS_TO_RELEASE) {
                 currentPitchEstimate = null
@@ -121,14 +140,31 @@ class OnsetEnvelopeTracker(
                 if (rms < currentOffsetThreshold) {
                     waitForQuietAfterReject = false
                 }
+                val lockedEstimate = currentPitchEstimate
                 if (rms >= currentOnsetThreshold &&
-                    (!waitForQuietAfterReject || rms >= prevRms * REATTACK_RATIO)
+                    (!waitForQuietAfterReject || isMultiHopReattack(rms, minRecentRms))
                 ) {
                     state = State.ATTACK_SETTLING
                     pendingOnsetMs = timestampMs
                     settleHops = 1
                     hopsSinceOnset = 1
                     quietHops = 0
+                    resetRmsHistory()
+                } else if (waitForQuietAfterReject &&
+                    rms >= currentOnsetThreshold &&
+                    consecutiveLivePitchCount >= 2 &&
+                    lockedEstimate != null
+                ) {
+                    activeMidi = lockedEstimate.midiNote
+                    currentMidi = lockedEstimate.midiNote
+                    state = State.SUSTAINING
+                    waitForQuietAfterReject = false
+                    hopsSinceOnset = 0
+                    quietHops = 0
+                    candidateLegatoMidi = -1
+                    candidateLegatoHops = 0
+                    resetRmsHistory()
+                    onNoteOn(activeMidi, timestampMs)
                 }
             }
 
@@ -150,6 +186,7 @@ class OnsetEnvelopeTracker(
                         quietHops = 0
                         candidateLegatoMidi = -1
                         candidateLegatoHops = 0
+                        resetRmsHistory()
                         onNoteOn(estimate.midiNote, pendingOnsetMs)
                     } else if (settleHops >= MAX_SETTLE_HOPS) {
                         state = State.IDLE
@@ -173,17 +210,15 @@ class OnsetEnvelopeTracker(
                         waitForQuietAfterReject = false
                         onNoteOff(releasedMidi, timestampMs)
                         prevRms = rms
+                        recordRms(rms)
                         return
                     }
                 } else {
                     quietHops = 0
                 }
 
-                // 2) Check re-attack spike (same key struck again or sharper louder note)
-                if (hopsSinceOnset >= MIN_NOTE_LENGTH_HOPS &&
-                    rms >= currentOnsetThreshold &&
-                    rms >= prevRms * REATTACK_RATIO
-                ) {
+                // 2) Check multi-hop re-attack swell (same key struck again or sharper louder note)
+                if (hopsSinceOnset >= MIN_NOTE_LENGTH_HOPS && isMultiHopReattack(rms, minRecentRms)) {
                     val prevMidi = activeMidi
                     activeMidi = -1
                     currentMidi = null
@@ -195,14 +230,17 @@ class OnsetEnvelopeTracker(
                     quietHops = 0
                     candidateLegatoMidi = -1
                     candidateLegatoHops = 0
+                    waitForQuietAfterReject = false
+                    resetRmsHistory()
                     prevRms = rms
+                    recordRms(rms)
                     return
                 }
 
                 // 3) Check stable legato pitch change
                 if (hopsSinceOnset >= MIN_LEGATO_HOPS && rms >= currentOffsetThreshold) {
                     val estimate = pitchDetector.detect(analysisWindow)
-                    if (estimate != null && estimate.confidence >= 0.72f) {
+                    if (estimate != null && estimate.confidence >= LEGATO_MIN_CONFIDENCE) {
                         if (abs(estimate.midiNote - activeMidi) >= 1) {
                             if (estimate.midiNote == candidateLegatoMidi) {
                                 candidateLegatoHops++
@@ -220,6 +258,7 @@ class OnsetEnvelopeTracker(
                                 hopsSinceOnset = 0
                                 candidateLegatoMidi = -1
                                 candidateLegatoHops = 0
+                                resetRmsHistory()
                                 onNoteOn(newMidi, max(0L, timestampMs - 10L))
                             }
                         } else {
@@ -232,6 +271,38 @@ class OnsetEnvelopeTracker(
         }
 
         prevRms = rms
+        recordRms(rms)
+    }
+
+    private fun recentMinRms(): Float {
+        if (rmsHistoryCount == 0) return prevRms
+        var minVal = Float.MAX_VALUE
+        for (i in 0 until rmsHistoryCount) {
+            if (rmsHistory[i] < minVal) {
+                minVal = rmsHistory[i]
+            }
+        }
+        return minVal
+    }
+
+    private fun recordRms(rms: Float) {
+        rmsHistory[rmsHistoryIndex] = rms
+        rmsHistoryIndex = (rmsHistoryIndex + 1) % REATTACK_HISTORY_HOPS
+        if (rmsHistoryCount < REATTACK_HISTORY_HOPS) {
+            rmsHistoryCount++
+        }
+    }
+
+    private fun resetRmsHistory() {
+        rmsHistory.fill(0f)
+        rmsHistoryIndex = 0
+        rmsHistoryCount = 0
+    }
+
+    private fun isMultiHopReattack(rms: Float, minRecentRms: Float): Boolean {
+        return rms >= currentOnsetThreshold &&
+            rms > prevRms &&
+            (minRecentRms <= 1e-6f || rms >= minRecentRms * MULTI_HOP_REATTACK_RATIO)
     }
 
     private fun recomputeThresholds() {
@@ -241,12 +312,15 @@ class OnsetEnvelopeTracker(
 
     companion object {
         private const val SETTLE_HOPS_REQUIRED = 4   // 1024 samples (~21.3 ms) so YIN sees only post-onset audio
-        private const val MAX_SETTLE_HOPS = 8        // ~43 ms max wait for pitch lock
+        private const val MAX_SETTLE_HOPS = 14       // ~75 ms max wait for pitch lock
         private const val QUIET_HOPS_TO_RELEASE = 4  // ~21 ms below sustain floor
         private const val LIVE_PITCH_HOP_INTERVAL = 4 // ~21 ms continuous pitch refresh for diagnostics
-        private const val MIN_NOTE_LENGTH_HOPS = 8   // ~43 ms refractory period
+        private const val LIVE_LOCK_CONFIDENCE = 0.68f
+        private const val MIN_NOTE_LENGTH_HOPS = 12  // ~64 ms refractory period
         private const val MIN_LEGATO_HOPS = 7
         private const val LEGATO_CONFIRM_HOPS = 3
-        private const val REATTACK_RATIO = 1.85f
+        private const val LEGATO_MIN_CONFIDENCE = 0.65f
+        private const val REATTACK_HISTORY_HOPS = 6
+        private const val MULTI_HOP_REATTACK_RATIO = 1.55f
     }
 }

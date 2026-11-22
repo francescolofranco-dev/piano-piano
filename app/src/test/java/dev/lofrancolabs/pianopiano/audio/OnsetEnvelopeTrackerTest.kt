@@ -188,5 +188,101 @@ class OnsetEnvelopeTrackerTest {
         assertNull("Expected live pitch to clear after silence", tracker.currentPitchEstimate)
     }
 
+    @Test
+    fun detectsSmoothRepeatedKeyReattackOverReverbTail() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+
+        repeat(10) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val fC4 = MidiUtils.midiToFrequency(60)
+        // Initial C4 strike decaying to steady reverb tail (amp = 0.020)
+        for (h in 0 until 24) {
+            val amp = if (h < 10) 0.20 else 0.020
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                hop[i] = (amp * sin(2.0 * PI * fC4 * t)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        // Gradual multi-hop re-strike of same C4 key (each hop ~1.3x, cumulative >1.55x over tail)
+        val reattackAmps = floatArrayOf(0.025f, 0.032f, 0.042f, 0.055f)
+        for (h in 0 until 16) {
+            val amp = if (h < reattackAmps.size) reattackAmps[h] else 0.055f
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                hop[i] = (amp * sin(2.0 * PI * fC4 * t)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onEvents = events.filter { it.isOn }
+        assertEquals(2, onEvents.size)
+        assertEquals(60, onEvents[0].midi)
+        assertEquals(60, onEvents[1].midi)
+    }
+
+    @Test
+    fun recoversFromUnpitchedNoiseRejectWhenPitchEmerges() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+
+        repeat(8) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        // 16 hops of unpitched white noise (~0.026 RMS) triggers reject lockout above offsetThreshold
+        var seed = 1234567
+        repeat(16) {
+            for (i in 0 until 256) {
+                seed = seed * 1664525 + 1013904223
+                val normalized = ((seed ushr 16) and 0xFFFF) / 32768.0 - 1.0
+                hop[i] = (0.045 * normalized).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        // Immediately transition into steady C4 at equal RMS (~0.026) without dropping to silence
+        val fC4 = MidiUtils.midiToFrequency(60)
+        for (h in 0 until 14) {
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                hop[i] = (0.0368 * sin(2.0 * PI * fC4 * t)).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onEvents = events.filter { it.isOn }
+        assertEquals(1, onEvents.size)
+        assertEquals(60, onEvents[0].midi)
+    }
+
     private fun currentMs(samples: Long): Long = (samples * 1000L) / 48_000L
 }

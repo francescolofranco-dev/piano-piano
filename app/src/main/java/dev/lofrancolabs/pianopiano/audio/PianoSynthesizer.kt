@@ -133,7 +133,14 @@ class PianoSynthesizer {
         }
     }
 
-    fun release() {
+    fun stop() {
+        synchronized(lock) {
+            for (voice in voices) {
+                voice.active = false
+                voice.releasing = false
+            }
+            click.active = false
+        }
         running.set(false)
         val thread = renderThread
         renderThread = null
@@ -143,6 +150,10 @@ class PianoSynthesizer {
             } catch (_: InterruptedException) {
             }
         }
+    }
+
+    fun release() {
+        stop()
     }
 
     private fun renderBlock(out: FloatArray) {

@@ -99,6 +99,24 @@ class YinPitchDetector(
 
         if (tauEstimate <= 0) return null
 
+        // Guard against 2nd-harmonic octave-up lock when phone mics attenuate the fundamental
+        if (cmndBuffer[tauEstimate] > 0.04f) {
+            val doubleTau = tauEstimate * 2
+            if (doubleTau in (minTau + 2)..(maxTau - 2)) {
+                var subTau = -1
+                var subVal = Float.MAX_VALUE
+                for (t in (doubleTau - 2)..(doubleTau + 2)) {
+                    if (cmndBuffer[t] < subVal) {
+                        subVal = cmndBuffer[t]
+                        subTau = t
+                    }
+                }
+                if (subTau > 0 && subVal < cmndBuffer[tauEstimate] * 0.80f && subVal < 0.25f) {
+                    tauEstimate = subTau
+                }
+            }
+        }
+
         // Step 4: Parabolic interpolation around tauEstimate
         val betterTau = if (tauEstimate in (minTau + 1) until maxTau) {
             val s0 = cmndBuffer[tauEstimate - 1]

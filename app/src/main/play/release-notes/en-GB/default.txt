@@ -1,1 +1,1 @@
-Fixed real-world acoustic microphone detection sensitivity and multi-hop onset tracking, removed Touch mode, and added an interactive Note Detection Test in Settings.
+Fixed live exercise note detection by releasing the count-in AudioTrack before capturing microphone audio, improving repeated-note re-attack detection and lockout recovery over room reverb, guarding against octave-up harmonic errors, and expanding late tolerance on half/whole notes.
