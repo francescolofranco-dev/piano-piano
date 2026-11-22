@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <rect width="1024" height="500" fill="#111318"/>
+  <!-- Subtle horizontal treble staff backdrop -->
+  <g stroke="#222834" stroke-width="2">
+    <line x1="0" y1="150" x2="1024" y2="150"/>
+    <line x1="0" y1="190" x2="1024" y2="190"/>
+    <line x1="0" y1="230" x2="1024" y2="230"/>
+    <line x1="0" y1="270" x2="1024" y2="270"/>
+    <line x1="0" y1="310" x2="1024" y2="310"/>
+  </g>
+  <!-- Ambient emblem circle on the right -->
+  <circle cx="808" cy="250" r="168" fill="#191D26" stroke="#2E3545" stroke-width="2"/>
+  <circle cx="808" cy="250" r="138" fill="none" stroke="#E8B84B" stroke-opacity="0.22" stroke-width="2"/>
+  <g transform="translate(612 54) scale(3.63)">
+    <path fill="none" stroke="#E8B84B" stroke-width="3.2" stroke-linecap="round" d="M34,34 Q54,23 74,34"/>
+    <circle cx="54" cy="24" r="3.5" fill="#E8B84B"/>
+    <path fill="#F5F1E8" d="M31,42 H41 V71 Q41,74 38,74 H34 Q31,74 31,71 Z"/>
+    <path fill="#F5F1E8" d="M43,42 H53 V71 Q53,74 50,74 H46 Q43,74 43,71 Z"/>
+    <path fill="#F5F1E8" d="M55,42 H65 V71 Q65,74 62,74 H58 Q55,74 55,71 Z"/>
+    <path fill="#E8B84B" d="M67,42 H77 V71 Q77,74 74,74 H70 Q67,74 67,71 Z"/>
+    <path fill="#111318" d="M39,40 H45 V59 Q45,61 43,61 H41 Q39,61 39,59 Z"/>
+    <path fill="#111318" d="M51,40 H57 V59 Q57,61 55,61 H53 Q51,61 51,59 Z"/>
+    <path fill="#111318" d="M63,40 H69 V59 Q69,61 67,61 H65 Q63,61 63,59 Z"/>
+  </g>
+  <!-- Duration bar accents -->
+  <rect x="76" y="76" width="110" height="12" rx="6" fill="#3DDC97" fill-opacity="0.85"/>
+  <rect x="196" y="76" width="170" height="12" rx="6" fill="#58A6FF" fill-opacity="0.45"/>
+  <text x="76" y="132" fill="#E8B84B" font-family="Arial,sans-serif" font-size="16" font-weight="bold" letter-spacing="4">STEP BY STEP</text>
+  <text x="72" y="226" fill="#F5F1E8" font-family="Georgia,serif" font-size="88">Piano Piano</text>
+  <text x="76" y="286" fill="#F5F1E8" font-family="Georgia,serif" font-size="30">Play the right key, right on time.</text>
+  <text x="76" y="354" fill="#9CA5B4" font-family="Arial,sans-serif" font-size="20">Real-time microphone pitch, rhythm &amp; hold feedback</text>
+  <text x="76" y="390" fill="#9CA5B4" font-family="Arial,sans-serif" font-size="18">Offline drills • Staff &amp; duration bars • Touch piano</text>
+</svg>

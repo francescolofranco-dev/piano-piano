@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Subtle warm gold rhythm arc & pulse above keys -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M34,34 Q54,23 74,34"
+        android:strokeColor="#E8B84B"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.2" />
+    <path
+        android:fillColor="#E8B84B"
+        android:pathData="M54,24 A3.5,3.5 0 1,1 53.99,24 Z" />
+    <!-- Four ivory piano keys -->
+    <path
+        android:fillColor="#F5F1E8"
+        android:pathData="M31,42 H41 V71 Q41,74 38,74 H34 Q31,74 31,71 Z" />
+    <path
+        android:fillColor="#F5F1E8"
+        android:pathData="M43,42 H53 V71 Q53,74 50,74 H46 Q43,74 43,71 Z" />
+    <path
+        android:fillColor="#F5F1E8"
+        android:pathData="M55,42 H65 V71 Q65,74 62,74 H58 Q55,74 55,71 Z" />
+    <path
+        android:fillColor="#E8B84B"
+        android:pathData="M67,42 H77 V71 Q77,74 74,74 H70 Q67,74 67,71 Z" />
+    <!-- Sharp / black keys -->
+    <path
+        android:fillColor="#111318"
+        android:pathData="M39,40 H45 V59 Q45,61 43,61 H41 Q39,61 39,59 Z" />
+    <path
+        android:fillColor="#111318"
+        android:pathData="M51,40 H57 V59 Q57,61 55,61 H53 Q51,61 51,59 Z" />
+    <path
+        android:fillColor="#111318"
+        android:pathData="M63,40 H69 V59 Q69,61 67,61 H65 Q63,61 63,59 Z" />
+</vector>
