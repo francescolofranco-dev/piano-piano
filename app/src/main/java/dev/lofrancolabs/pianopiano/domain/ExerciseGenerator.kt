@@ -95,7 +95,7 @@ object ExerciseGenerator {
             BeginnerDifficulty.BEGINNER -> {
                 pool = beginnerPool
                 barCount = random.nextInt(6, 9) // 6–8 bars (24–32 beats)
-                bpm = random.nextInt(68, 75)
+                bpm = random.nextInt(56, 63)
                 barTemplates = beginnerBars
                 finalTemplates = beginnerFinalBars
                 maxStep = 1
@@ -105,7 +105,7 @@ object ExerciseGenerator {
             BeginnerDifficulty.INTERMEDIATE -> {
                 pool = intermediatePool
                 barCount = random.nextInt(10, 13) // 10–12 bars (40–48 beats)
-                bpm = random.nextInt(74, 83)
+                bpm = random.nextInt(64, 71)
                 barTemplates = intermediateBars
                 finalTemplates = intermediateFinalBars
                 maxStep = 2
@@ -115,7 +115,7 @@ object ExerciseGenerator {
             BeginnerDifficulty.ADVANCED -> {
                 pool = advancedBeginnerPool
                 barCount = random.nextInt(16, 21) // 16–20 bars (64–80 beats)
-                bpm = random.nextInt(80, 91)
+                bpm = random.nextInt(72, 79)
                 barTemplates = advancedBars
                 finalTemplates = advancedFinalBars
                 maxStep = 4

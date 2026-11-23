@@ -1,1 +1,1 @@
-Stabilized live pitch readout and strike detection with a wider 2048-sample YIN analysis window, slower sampling cadence, confidence-weighted multi-frame consensus voting, and harmonic/glide filtering so single piano notes stay steady without spurious rapid detections.
+Fixed count-in timing so all 4 metronome beats sound cleanly before the first note reaches the playhead, slowed default beginner tempos (56–62 BPM Beginner, 64–70 Intermediate, 72–78 Advanced) and staff scroll speed, and added a visual 1 2 3 4 beat indicator on the staff.

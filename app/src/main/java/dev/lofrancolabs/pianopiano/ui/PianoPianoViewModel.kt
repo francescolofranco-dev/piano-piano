@@ -246,18 +246,17 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         stopActiveSession(keepSummary = false, restartCapture = false)
-        captureEngine.stop() // Avoid mic picking up the preview audio
 
         val exercise = state.selectedExercise
         val bpm = state.bpm
         val msPerBeat = 60_000.0 / bpm
         val leadInBeats = 2f
-        val startMs = nowMs() + (leadInBeats * msPerBeat).roundToLong()
 
         _uiState.update {
             it.copy(
                 phase = SessionPhase.PREVIEWING,
                 beatPosition = -leadInBeats,
+                countInBeat = 0,
                 evaluations = emptyList(),
                 summary = null,
                 statusMessage = "Listening to ${exercise.title}..."
@@ -269,6 +268,14 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             var lastBeatFloor = Int.MIN_VALUE
 
             try {
+                withContext(Dispatchers.IO) {
+                    captureEngine.stop() // Avoid mic picking up the preview audio
+                    synthesizer.ensureStarted()
+                }
+                delay(120L)
+                if (!isActive) return@launch
+                val startMs = nowMs() + (leadInBeats * msPerBeat).roundToLong()
+
                 while (isActive) {
                     val now = nowMs()
                     val beatPos = ((now - startMs) / msPerBeat).toFloat()
@@ -344,29 +351,19 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         stopActiveSession(keepSummary = false, restartCapture = false)
-        captureEngine.stop()
 
         val exercise = state.selectedExercise
         val bpm = state.bpm
         val msPerBeat = 60_000.0 / bpm
         val countInBeats = 4
-        val countInStartMs = nowMs()
-        val exerciseStartMs = countInStartMs + (countInBeats * msPerBeat).roundToLong()
-        val beat4ClickDoneMs = countInStartMs + ((countInBeats - 1) * msPerBeat).roundToLong() + 75L
-
-        val judge = ExerciseJudge(exercise = exercise, bpm = bpm, exerciseStartMs = exerciseStartMs)
-        activeJudge = judge
-        val acceptWindowStart = exerciseStartMs - maxOf(250L, (0.45 * msPerBeat).roundToLong())
-        judgeAcceptWindowStartMs = acceptWindowStart
-
         val firstNoteLabel = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote
             ?.let { m -> MidiUtils.midiToName(m, state.noteNaming) } ?: "first note"
         _uiState.update {
             it.copy(
                 phase = SessionPhase.COUNT_IN,
                 beatPosition = -countInBeats.toFloat(),
-                countInBeat = 1,
-                evaluations = judge.snapshot(),
+                countInBeat = 0,
+                evaluations = emptyList(),
                 summary = null,
                 lastXpReward = null,
                 expectedTargetMidi = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote,
@@ -377,9 +374,33 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         sessionJob = viewModelScope.launch {
             var lastCountInBeatTriggered = 0
             var hasSwitchedToCapture = false
-            val exerciseEndMs = exerciseStartMs + (exercise.totalBeats * msPerBeat).roundToLong() + 450L
 
             try {
+                withContext(Dispatchers.IO) {
+                    captureEngine.stop()
+                    synthesizer.ensureStarted()
+                }
+                delay(120L)
+                if (!isActive) return@launch
+
+                val countInStartMs = nowMs()
+                val exerciseStartMs = countInStartMs + (countInBeats * msPerBeat).roundToLong()
+                val beat4ClearanceMs = minOf(240L, (msPerBeat * 0.42).roundToLong())
+                val beat4ClickDoneMs = countInStartMs + ((countInBeats - 1) * msPerBeat).roundToLong() + beat4ClearanceMs
+
+                val judge = ExerciseJudge(exercise = exercise, bpm = bpm, exerciseStartMs = exerciseStartMs)
+                activeJudge = judge
+                val acceptWindowStart = exerciseStartMs - maxOf(250L, (0.45 * msPerBeat).roundToLong())
+                judgeAcceptWindowStartMs = acceptWindowStart
+                val exerciseEndMs = exerciseStartMs + (exercise.totalBeats * msPerBeat).roundToLong() + 450L
+
+                _uiState.update {
+                    it.copy(
+                        countInBeat = 1,
+                        evaluations = judge.snapshot()
+                    )
+                }
+
                 while (isActive) {
                     val now = nowMs()
                     val beatPos = ((now - exerciseStartMs) / msPerBeat).toFloat()
@@ -553,7 +574,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     private fun nowMs(): Long = SystemClock.elapsedRealtimeNanos() / 1_000_000L
 
     companion object {
-        const val MIN_BPM = 50
+        const val MIN_BPM = 40
         const val MAX_BPM = 120
     }
 }

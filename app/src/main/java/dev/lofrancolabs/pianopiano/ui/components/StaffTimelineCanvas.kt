@@ -38,6 +38,7 @@ import dev.lofrancolabs.pianopiano.model.TimingVerdict
 import dev.lofrancolabs.pianopiano.ui.theme.PianoColors
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 
 @Composable
@@ -57,8 +58,12 @@ fun StaffTimelineCanvas(
     val latestBpm by rememberUpdatedState(bpm)
     var smoothBeat by remember(exercise.id) { mutableFloatStateOf(beatPosition) }
 
-    LaunchedEffect(phase, exercise.id) {
-        if (phase == SessionPhase.PREVIEWING || phase == SessionPhase.COUNT_IN || phase == SessionPhase.PLAYING) {
+    val isAnimating = phase == SessionPhase.PREVIEWING ||
+        phase == SessionPhase.PLAYING ||
+        (phase == SessionPhase.COUNT_IN && countInBeat >= 1)
+
+    LaunchedEffect(isAnimating, exercise.id) {
+        if (isAnimating) {
             smoothBeat = latestBeat
             var prevFrameNanos = 0L
             while (true) {
@@ -98,6 +103,18 @@ fun StaffTimelineCanvas(
     val restLabelStyle = remember {
         TextStyle(color = PianoColors.TextMuted.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
+    val beatNumberActiveStyle = remember {
+        TextStyle(color = PianoColors.Background, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+    }
+    val beatNumberInactiveStyle = remember {
+        TextStyle(color = PianoColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+    val beatActiveLayouts = remember(beatNumberActiveStyle) {
+        (1..6).map { textMeasurer.measure(it.toString(), beatNumberActiveStyle) }
+    }
+    val beatInactiveLayouts = remember(beatNumberInactiveStyle) {
+        (1..6).map { textMeasurer.measure(it.toString(), beatNumberInactiveStyle) }
+    }
 
     val evalByEventIndex = remember(evaluations) {
         evaluations.associateBy { it.noteEventIndex }
@@ -113,7 +130,7 @@ fun StaffTimelineCanvas(
         val width = size.width
         val height = size.height
         val playheadX = width * 0.22f
-        val pxPerBeat = max(72.dp.toPx(), width / 7.8f)
+        val pxPerBeat = max(58.dp.toPx(), width / 7.8f)
 
         val f5Y = height * 0.34f
         val staffSpan = height * 0.36f
@@ -132,7 +149,7 @@ fun StaffTimelineCanvas(
                 PianoColors.WarmGold
             }
             drawRect(
-                color = flashColor.copy(alpha = 0.09f * beatFlashAlpha),
+                color = flashColor.copy(alpha = 0.15f * beatFlashAlpha),
                 topLeft = Offset(playheadX - 18.dp.toPx(), 0f),
                 size = Size(36.dp.toPx(), height)
             )
@@ -431,6 +448,60 @@ fun StaffTimelineCanvas(
                 textLayoutResult = countText,
                 topLeft = Offset(boxX + boxPadX, boxY + boxPadY)
             )
+        }
+
+        // Compact 1 2 3 4 visual beat indicator pill during count-in, play, and listen preview
+        if (isAnimating) {
+            val barBeats = exercise.beatsPerBar.coerceIn(2, 6)
+            val activeBeat = if (phase == SessionPhase.COUNT_IN) {
+                countInBeat.coerceIn(1, barBeats)
+            } else {
+                (((floor(smoothBeat).toInt() % barBeats) + barBeats) % barBeats) + 1
+            }
+            val circleDiameter = 18.dp.toPx()
+            val circleRadius = circleDiameter / 2f
+            val circleGap = 5.dp.toPx()
+            val pillPadX = 8.dp.toPx()
+            val pillPadY = 5.dp.toPx()
+            val pillW = pillPadX * 2f + barBeats * circleDiameter + (barBeats - 1) * circleGap
+            val pillH = pillPadY * 2f + circleDiameter
+            val pillLeft = (width - pillW - 10.dp.toPx()).coerceAtLeast(10.dp.toPx())
+            val pillTop = 10.dp.toPx()
+            val activePillColor = if (phase == SessionPhase.PREVIEWING) {
+                PianoColors.TargetBlue
+            } else {
+                PianoColors.WarmGold
+            }
+
+            drawRoundRect(
+                color = PianoColors.Background.copy(alpha = 0.80f),
+                topLeft = Offset(pillLeft, pillTop),
+                size = Size(pillW, pillH),
+                cornerRadius = CornerRadius(pillH / 2f)
+            )
+            drawRoundRect(
+                color = PianoColors.Border,
+                topLeft = Offset(pillLeft, pillTop),
+                size = Size(pillW, pillH),
+                cornerRadius = CornerRadius(pillH / 2f),
+                style = Stroke(width = 1.dp.toPx())
+            )
+
+            for (b in 1..barBeats) {
+                val isCurrent = b == activeBeat
+                val cx = pillLeft + pillPadX + (b - 1) * (circleDiameter + circleGap) + circleRadius
+                val cy = pillTop + pillPadY + circleRadius
+                drawCircle(
+                    color = if (isCurrent) activePillColor else PianoColors.SurfaceElevated,
+                    radius = circleRadius,
+                    center = Offset(cx, cy)
+                )
+                val label = if (isCurrent) beatActiveLayouts[b - 1] else beatInactiveLayouts[b - 1]
+                drawText(
+                    textLayoutResult = label,
+                    topLeft = Offset(cx - label.size.width / 2f, cy - label.size.height / 2f)
+                )
+            }
         }
     }
 }

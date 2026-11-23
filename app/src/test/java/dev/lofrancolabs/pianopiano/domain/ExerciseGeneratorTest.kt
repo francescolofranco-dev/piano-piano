@@ -19,7 +19,7 @@ class ExerciseGeneratorTest {
 
             val beg = ExerciseGenerator.generate(BeginnerDifficulty.BEGINNER, seed, rng)
             assertEquals(BeginnerDifficulty.BEGINNER, beg.difficulty)
-            assertTrue(beg.defaultBpm in 68..74)
+            assertTrue(beg.defaultBpm in 56..62)
             assertTrue("Expected 6–8 bars (24, 28, or 32 beats), got ${beg.totalBeats}", beg.totalBeats in listOf(24f, 28f, 32f))
             assertBarAlignment(beg.notes.map { it.startBeat to it.durationBeats })
             val begPitches = beg.notes.mapNotNull { it.midiNote }
@@ -28,7 +28,7 @@ class ExerciseGeneratorTest {
 
             val inter = ExerciseGenerator.generate(BeginnerDifficulty.INTERMEDIATE, seed, rng)
             assertEquals(BeginnerDifficulty.INTERMEDIATE, inter.difficulty)
-            assertTrue(inter.defaultBpm in 74..82)
+            assertTrue(inter.defaultBpm in 64..70)
             assertTrue("Expected 10–12 bars (40, 44, or 48 beats), got ${inter.totalBeats}", inter.totalBeats in listOf(40f, 44f, 48f))
             assertBarAlignment(inter.notes.map { it.startBeat to it.durationBeats })
             val interPitches = inter.notes.mapNotNull { it.midiNote }
@@ -37,7 +37,7 @@ class ExerciseGeneratorTest {
 
             val adv = ExerciseGenerator.generate(BeginnerDifficulty.ADVANCED, seed, rng)
             assertEquals(BeginnerDifficulty.ADVANCED, adv.difficulty)
-            assertTrue(adv.defaultBpm in 80..90)
+            assertTrue(adv.defaultBpm in 72..78)
             assertTrue("Expected 16–20 bars (64..80 beats), got ${adv.totalBeats}", adv.totalBeats in listOf(64f, 68f, 72f, 76f, 80f))
             assertBarAlignment(adv.notes.map { it.startBeat to it.durationBeats })
             val advPitches = adv.notes.mapNotNull { it.midiNote }
