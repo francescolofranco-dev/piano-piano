@@ -22,6 +22,7 @@ data class AudioMonitorSnapshot(
     val onsetThreshold: Float = 0.006f,
     val offsetThreshold: Float = 0.003f,
     val liveMidi: Int? = null,
+    val liveMidis: Set<Int> = emptySet(),
     val liveFrequencyHz: Float? = null,
     val liveConfidence: Float? = null,
     val activeAudioSourceLabel: String = "Idle"
@@ -75,6 +76,10 @@ class AudioCaptureEngine(
 
     fun setSensitivity(sensitivity: MicSensitivity) {
         tracker.setSensitivity(sensitivity)
+    }
+
+    fun setPolyphonicMode(enabled: Boolean) {
+        tracker.setPolyphonicMode(enabled)
     }
 
     fun setSourceMode(mode: MicSourceMode) {
@@ -179,6 +184,9 @@ class AudioCaptureEngine(
                             -80f
                         }
                         val estimate = tracker.currentPitchEstimate
+                        val activeSet = tracker.currentMidis.ifEmpty {
+                            estimate?.midiNote?.let(::setOf) ?: emptySet()
+                        }
                         onMonitorUpdate(
                             AudioMonitorSnapshot(
                                 rms = displayRms,
@@ -186,6 +194,7 @@ class AudioCaptureEngine(
                                 onsetThreshold = tracker.currentOnsetThreshold,
                                 offsetThreshold = tracker.currentOffsetThreshold,
                                 liveMidi = tracker.currentMidi ?: estimate?.midiNote,
+                                liveMidis = activeSet,
                                 liveFrequencyHz = estimate?.frequencyHz,
                                 liveConfidence = estimate?.confidence,
                                 activeAudioSourceLabel = activeSourceLabel

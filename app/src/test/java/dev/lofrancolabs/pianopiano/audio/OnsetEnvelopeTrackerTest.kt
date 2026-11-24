@@ -403,5 +403,94 @@ class OnsetEnvelopeTrackerTest {
         assertEquals(60, onEvents[0].midi)
     }
 
+    @Test
+    fun detectsSimultaneousTwoHandChordInPolyphonicMode() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+        tracker.setPolyphonicMode(true)
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+        repeat(10) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val fC3 = MidiUtils.midiToFrequency(48)
+        val fE4 = MidiUtils.midiToFrequency(64)
+        for (h in 0 until 30) {
+            for (i in 0 until 256) {
+                val t = (h * 256 + i).toDouble() / 48_000.0
+                val low = 0.14 * (sin(2.0 * PI * fC3 * t) + 0.4 * sin(2.0 * PI * fC3 * 2.0 * t))
+                val high = 0.14 * (sin(2.0 * PI * fE4 * t) + 0.4 * sin(2.0 * PI * fE4 * 2.0 * t))
+                hop[i] = (low + high).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        repeat(10) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onMidis = events.filter { it.isOn }.map { it.midi }.toSet()
+        val offMidis = events.filter { !it.isOn }.map { it.midi }.toSet()
+        assertEquals(setOf(48, 64), onMidis)
+        assertEquals(setOf(48, 64), offMidis)
+    }
+
+    @Test
+    fun detectsMovingRightHandMelodyOverHeldLeftHandBass() {
+        val events = mutableListOf<CapturedEvent>()
+        val tracker = OnsetEnvelopeTracker(
+            sampleRate = 48_000,
+            hopSize = 256,
+            onNoteOn = { midi, ts -> events.add(CapturedEvent(true, midi, ts)) },
+            onNoteOff = { midi, ts -> events.add(CapturedEvent(false, midi, ts)) }
+        )
+        tracker.setPolyphonicMode(true)
+
+        val hop = FloatArray(256)
+        var sampleIndex = 0L
+        repeat(10) {
+            hop.fill(0f)
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val fC3 = MidiUtils.midiToFrequency(48)
+        val fE4 = MidiUtils.midiToFrequency(64)
+        val fG4 = MidiUtils.midiToFrequency(67)
+
+        // Hold C3 + E4 for 32 hops, then keep C3 continuously sounding while RH switches E4 -> G4
+        for (h in 0 until 64) {
+            val fRight = if (h < 32) fE4 else fG4
+            for (i in 0 until 256) {
+                val t = sampleIndex.toDouble() / 48_000.0 + i.toDouble() / 48_000.0
+                val low = 0.14 * (sin(2.0 * PI * fC3 * t) + 0.4 * sin(2.0 * PI * fC3 * 2.0 * t))
+                val high = 0.14 * (sin(2.0 * PI * fRight * t) + 0.4 * sin(2.0 * PI * fRight * 2.0 * t))
+                hop[i] = (low + high).toFloat()
+            }
+            tracker.processHop(hop, currentMs(sampleIndex))
+            sampleIndex += 256
+        }
+
+        val onMidis = events.filter { it.isOn }.map { it.midi }
+        val offMidis = events.filter { !it.isOn }.map { it.midi }
+        assertTrue("Expected initial C3 onset", 48 in onMidis)
+        assertTrue("Expected initial E4 onset", 64 in onMidis)
+        assertTrue("Expected moving G4 onset", 67 in onMidis)
+        assertTrue("Expected E4 release when switching to G4", 64 in offMidis)
+        assertEquals("Held C3 bass should not be prematurely released", 0, offMidis.count { it == 48 })
+    }
+
     private fun currentMs(samples: Long): Long = (samples * 1000L) / 48_000L
 }

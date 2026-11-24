@@ -40,4 +40,13 @@ class MidiUtilsNamingTest {
         assertEquals("Wrong: G4", eval.feedbackBadgeText(NoteNamingSystem.ENGLISH))
         assertEquals("Wrong: Sol4", eval.feedbackBadgeText(NoteNamingSystem.SOLFEGE))
     }
+
+    @Test
+    fun computesBassStaffStepsCorrectlyForG2ToC4() {
+        assertEquals(0, MidiUtils.bassStaffStepFromG2(43))  // G2 bottom line
+        assertEquals(3, MidiUtils.bassStaffStepFromG2(48))  // C3 space 2
+        assertEquals(6, MidiUtils.bassStaffStepFromG2(53))  // F3 line 4
+        assertEquals(8, MidiUtils.bassStaffStepFromG2(57))  // A3 top line
+        assertEquals(10, MidiUtils.bassStaffStepFromG2(60)) // C4 ledger line above bass staff
+    }
 }

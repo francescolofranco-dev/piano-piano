@@ -14,6 +14,7 @@ object PianoColors {
     val TextMuted = Color(0xFF9CA5B4)
     val WarmGold = Color(0xFFE8B84B)
     val TargetBlue = Color(0xFF58A6FF)
+    val LeftHandPurple = Color(0xFFB388FF)
     val Emerald = Color(0xFF3DDC97)
     val Amber = Color(0xFFFFB347)
     val Coral = Color(0xFFFF6B6B)

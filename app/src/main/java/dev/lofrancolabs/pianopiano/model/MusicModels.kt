@@ -20,6 +20,22 @@ enum class BeginnerDifficulty(
     ADVANCED("Advanced", "Advanced", "C4–C5 • 16–20 bars", 75)
 }
 
+enum class PianoHand(val shortLabel: String) {
+    RIGHT("R"),
+    LEFT("L")
+}
+
+enum class HandMode(
+    val label: String,
+    val subtitle: String,
+    val shortLabel: String
+) {
+    RIGHT_HAND("Right Hand", "1 Hand • R", "RH"),
+    LEFT_HAND("Left Hand", "1 Hand • L", "LH"),
+    BOTH_ALTERNATING("Two Hands", "Alternating", "2H Alt"),
+    BOTH_TOGETHER("Together", "Both at once", "2H Sync")
+}
+
 object MidiUtils {
     private val englishNames = arrayOf(
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
@@ -68,13 +84,25 @@ object MidiUtils {
         val absoluteDiatonic = octave * 7 + diatonicInOctave[semitone]
         return absoluteDiatonic - 30 // 4 * 7 + 2 (E4)
     }
+
+    /**
+     * Diatonic step relative to G2 (bottom line of bass clef = 0).
+     * G2 = 0, C3 = 3, F3 = 6, A3 = 8, B3 = 9, C4 (Middle C ledger line) = 10.
+     */
+    fun bassStaffStepFromG2(midi: Int): Int {
+        val octave = Math.floorDiv(midi, 12) - 1
+        val semitone = ((midi % 12) + 12) % 12
+        val absoluteDiatonic = octave * 7 + diatonicInOctave[semitone]
+        return absoluteDiatonic - 18 // 2 * 7 + 4 (G2)
+    }
 }
 
 data class NoteEvent(
     val midiNote: Int?, // null represents a musical rest
     val startBeat: Float,
     val durationBeats: Float,
-    val fingerHint: Int? = null
+    val fingerHint: Int? = null,
+    val hand: PianoHand = PianoHand.RIGHT
 ) {
     val isRest: Boolean get() = midiNote == null
 }
@@ -87,10 +115,38 @@ data class Exercise(
     val defaultBpm: Int,
     val beatsPerBar: Int = 4,
     val difficulty: BeginnerDifficulty = BeginnerDifficulty.BEGINNER,
+    val handMode: HandMode = HandMode.RIGHT_HAND,
     val notes: List<NoteEvent>
 ) {
     val totalBeats: Float
         get() = notes.maxOfOrNull { it.startBeat + it.durationBeats } ?: 0f
+
+    val usesLeftHand: Boolean
+        get() = handMode != HandMode.RIGHT_HAND || notes.any { !it.isRest && it.hand == PianoHand.LEFT }
+
+    val usesRightHand: Boolean
+        get() = handMode != HandMode.LEFT_HAND || notes.any { !it.isRest && it.hand == PianoHand.RIGHT }
+
+    val usesGrandStaff: Boolean
+        get() = usesLeftHand && usesRightHand
+
+    val hasSimultaneousNotes: Boolean
+        get() {
+            if (handMode == HandMode.BOTH_TOGETHER) return true
+            val pitched = notes.filter { !it.isRest }
+            for (i in pitched.indices) {
+                val a = pitched[i]
+                val aEnd = a.startBeat + a.durationBeats
+                for (j in i + 1 until pitched.size) {
+                    val b = pitched[j]
+                    val bEnd = b.startBeat + b.durationBeats
+                    if (a.startBeat < bEnd - 0.001f && b.startBeat < aEnd - 0.001f) {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
 }
 
 enum class MicSensitivity(
@@ -143,6 +199,7 @@ data class NoteEvaluation(
     val expectedMidi: Int,
     val expectedStartMs: Long,
     val expectedEndMs: Long,
+    val hand: PianoHand = PianoHand.RIGHT,
     val playedMidi: Int? = null,
     val onsetDeltaMs: Long? = null,
     val actualDurationMs: Long? = null,

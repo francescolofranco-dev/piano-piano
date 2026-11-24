@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 import dev.lofrancolabs.pianopiano.domain.PlayerProgress
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
+import dev.lofrancolabs.pianopiano.model.HandMode
 import dev.lofrancolabs.pianopiano.model.MicSensitivity
 import dev.lofrancolabs.pianopiano.model.MicSourceMode
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
@@ -29,6 +30,16 @@ class PreferencesRepository(context: Context) {
 
     fun saveRandomDifficulty(difficulty: BeginnerDifficulty) {
         prefs.edit { putString(KEY_RANDOM_DIFFICULTY, difficulty.name) }
+    }
+
+    fun loadHandMode(): HandMode {
+        val raw = prefs.getString(KEY_HAND_MODE, HandMode.RIGHT_HAND.name)
+        return runCatching { HandMode.valueOf(raw ?: HandMode.RIGHT_HAND.name) }
+            .getOrDefault(HandMode.RIGHT_HAND)
+    }
+
+    fun saveHandMode(mode: HandMode) {
+        prefs.edit { putString(KEY_HAND_MODE, mode.name) }
     }
 
     fun loadProgress(): PlayerProgress {
@@ -75,6 +86,7 @@ class PreferencesRepository(context: Context) {
         private const val PREFS_NAME = "piano_piano_prefs"
         private const val KEY_NOTE_NAMING = "note_naming"
         private const val KEY_RANDOM_DIFFICULTY = "random_difficulty"
+        private const val KEY_HAND_MODE = "hand_mode"
         private const val KEY_TOTAL_XP = "total_xp"
         private const val KEY_EXERCISES_COMPLETED = "exercises_completed"
         private const val KEY_RANDOM_SEQ = "random_seq"

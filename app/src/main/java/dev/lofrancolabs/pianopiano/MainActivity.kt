@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
                     onSelectDifficulty = { difficulty ->
                         viewModel.selectDifficulty(difficulty, autoStart = false)
                     },
+                    onSelectHandMode = { handMode ->
+                        viewModel.selectHandMode(handMode, autoStart = false)
+                    },
                     onNextExercise = { viewModel.nextExercise(autoStart = true) },
                     onSelectNoteNaming = viewModel::setNoteNaming,
                     onAdjustBpm = viewModel::adjustBpm,

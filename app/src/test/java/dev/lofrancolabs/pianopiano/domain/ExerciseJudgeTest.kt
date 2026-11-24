@@ -2,7 +2,9 @@ package dev.lofrancolabs.pianopiano.domain
 
 import dev.lofrancolabs.pianopiano.model.DurationVerdict
 import dev.lofrancolabs.pianopiano.model.Exercise
+import dev.lofrancolabs.pianopiano.model.HandMode
 import dev.lofrancolabs.pianopiano.model.NoteEvent
+import dev.lofrancolabs.pianopiano.model.PianoHand
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
 import org.junit.Assert.assertEquals
@@ -109,5 +111,43 @@ class ExerciseJudgeTest {
         val eval = judge.finish(startMs + 2200L).evaluations[0]
         assertEquals(PitchVerdict.CORRECT, eval.pitchVerdict)
         assertEquals(TimingVerdict.TOO_LATE, eval.timingVerdict)
+    }
+
+    @Test
+    fun evaluatesSimultaneousTwoHandChordEvenWhenSlightlyStaggered() {
+        val twoHandExercise = Exercise(
+            id = "2h",
+            title = "Two Hands Together",
+            subtitle = "Unit test",
+            focusTag = "Test",
+            defaultBpm = 60,
+            handMode = HandMode.BOTH_TOGETHER,
+            notes = listOf(
+                NoteEvent(48, 0f, 2f, hand = PianoHand.LEFT),  // LH C3: 1000..3000
+                NoteEvent(64, 0f, 1f, hand = PianoHand.RIGHT), // RH E4: 1000..2000
+                NoteEvent(67, 1f, 1f, hand = PianoHand.RIGHT)  // RH G4: 2000..3000
+            )
+        )
+        val startMs = 1000L
+        val judge = ExerciseJudge(twoHandExercise, bpm = 60, exerciseStartMs = startMs)
+
+        // Both beat-0 notes arrive within ~25ms stagger
+        judge.onNoteOn(48, 1005L)
+        judge.onNoteOn(64, 1030L)
+        judge.onNoteOff(64, 1980L)
+        // Next RH note arrives while LH C3 is still held
+        judge.onNoteOn(67, 2010L)
+        judge.onNoteOff(67, 2980L)
+        judge.onNoteOff(48, 2990L)
+
+        val summary = judge.finish(3200L)
+        assertEquals(100, summary.pitchAccuracyPercent)
+        assertEquals(100, summary.timingAccuracyPercent)
+        assertEquals(100, summary.durationAccuracyPercent)
+        summary.evaluations.forEach { eval ->
+            assertEquals(PitchVerdict.CORRECT, eval.pitchVerdict)
+            assertEquals(TimingVerdict.PERFECT, eval.timingVerdict)
+            assertEquals(DurationVerdict.GOOD, eval.durationVerdict)
+        }
     }
 }

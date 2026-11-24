@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
+import dev.lofrancolabs.pianopiano.model.HandMode
 import dev.lofrancolabs.pianopiano.model.MicSensitivity
 import dev.lofrancolabs.pianopiano.model.MicSourceMode
 import dev.lofrancolabs.pianopiano.model.MidiUtils
@@ -64,6 +65,7 @@ import kotlinx.coroutines.launch
 fun MainScreen(
     uiState: PianoPianoUiState,
     onSelectDifficulty: (BeginnerDifficulty) -> Unit,
+    onSelectHandMode: (HandMode) -> Unit,
     onNextExercise: () -> Unit,
     onSelectNoteNaming: (NoteNamingSystem) -> Unit,
     onAdjustBpm: (Int) -> Unit,
@@ -97,6 +99,10 @@ fun MainScreen(
                 onSelectDifficulty = { diff ->
                     coroutineScope.launch { drawerState.close() }
                     onSelectDifficulty(diff)
+                },
+                onSelectHandMode = { mode ->
+                    coroutineScope.launch { drawerState.close() }
+                    onSelectHandMode(mode)
                 },
                 onAdjustBpm = onAdjustBpm,
                 onOpenDetectionTest = {
@@ -153,13 +159,18 @@ fun MainScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    val heardSuffix = uiState.heardMidi?.let { midi ->
-                        " • ${MidiUtils.midiToName(midi, uiState.noteNaming)}"
-                    }.orEmpty()
-                    val subtitleText = uiState.statusMessage ?: "${uiState.bpm} BPM$heardSuffix"
+                    val heardText = if (uiState.heardMidis.isNotEmpty()) {
+                        uiState.heardMidis.sorted().joinToString(" + ") { midi ->
+                            MidiUtils.midiToName(midi, uiState.noteNaming)
+                        }
+                    } else {
+                        uiState.heardMidi?.let { midi -> MidiUtils.midiToName(midi, uiState.noteNaming) }
+                    }
+                    val heardSuffix = heardText?.let { " • $it" }.orEmpty()
+                    val subtitleText = uiState.statusMessage ?: "${uiState.bpm} BPM • ${uiState.handMode.shortLabel}$heardSuffix"
                     val subtitleColor = when {
                         uiState.statusMessage != null -> PianoColors.WarmGold
-                        uiState.heardMidi != null -> PianoColors.Emerald
+                        heardText != null -> PianoColors.Emerald
                         else -> PianoColors.TextMuted
                     }
                     Text(
@@ -307,17 +318,33 @@ fun MainScreen(
             )
 
             // Bottom Dock: Visual 2-Octave Piano Keyboard Guide (C3 - C5)
-            val activeHoldEval = uiState.evaluations.lastOrNull {
+            val activeHolds = uiState.evaluations.filter {
                 it.activeHoldStartMs != null && it.activeHoldEndMs == null
             }
+            val heldCorrectMidis = activeHolds
+                .filter { it.pitchVerdict == PitchVerdict.CORRECT }
+                .mapNotNull { it.playedMidi }
+                .toSet()
+            val heldWrongMidis = activeHolds
+                .filter { it.pitchVerdict == PitchVerdict.WRONG_KEY }
+                .mapNotNull { it.playedMidi }
+                .toSet()
+            val effectiveHeardMidis = uiState.heardMidis.ifEmpty {
+                uiState.heardMidi?.let(::setOf) ?: emptySet()
+            }
+            val effectivePreviewMidis = uiState.previewActiveMidis.ifEmpty {
+                uiState.previewActiveMidi?.let(::setOf) ?: emptySet()
+            }
             InteractivePianoKeyboard(
-                expectedMidi = uiState.expectedTargetMidi,
-                heardMidi = uiState.heardMidi,
-                previewActiveMidi = uiState.previewActiveMidi,
+                expectedRightMidi = uiState.expectedRightMidi,
+                expectedLeftMidi = uiState.expectedLeftMidi,
+                heardMidis = effectiveHeardMidis,
+                previewActiveMidis = effectivePreviewMidis,
                 isPlaying = uiState.phase == SessionPhase.PLAYING,
-                heldCorrectMidi = activeHoldEval?.takeIf { it.pitchVerdict == PitchVerdict.CORRECT }?.playedMidi,
-                heldWrongMidi = activeHoldEval?.takeIf { it.pitchVerdict == PitchVerdict.WRONG_KEY }?.playedMidi,
+                heldCorrectMidis = heldCorrectMidis,
+                heldWrongMidis = heldWrongMidis,
                 noteNaming = uiState.noteNaming,
+                showLeftOctaveLabels = uiState.selectedExercise.usesLeftHand,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(0.95f)

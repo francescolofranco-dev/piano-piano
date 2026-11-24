@@ -1,11 +1,11 @@
 package dev.lofrancolabs.pianopiano.ui.components
 
+import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,7 +19,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -32,6 +34,7 @@ import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
+import dev.lofrancolabs.pianopiano.model.PianoHand
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.SessionPhase
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
@@ -40,6 +43,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @Composable
 fun StaffTimelineCanvas(
@@ -89,19 +93,22 @@ fun StaffTimelineCanvas(
     }
 
     val noteLabelStyle = remember {
-        TextStyle(color = PianoColors.TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        TextStyle(color = PianoColors.TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
     }
     val badgeStyle = remember {
-        TextStyle(color = PianoColors.Background, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        TextStyle(color = PianoColors.Background, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
     }
     val clefStyle = remember {
-        TextStyle(color = PianoColors.TextMuted.copy(alpha = 0.65f), fontSize = 38.sp)
+        TextStyle(color = PianoColors.TextMuted.copy(alpha = 0.7f), fontSize = 32.sp)
+    }
+    val grandClefStyle = remember {
+        TextStyle(color = PianoColors.TextMuted.copy(alpha = 0.7f), fontSize = 26.sp)
     }
     val countInStyle = remember {
         TextStyle(color = PianoColors.WarmGold, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
     }
     val restLabelStyle = remember {
-        TextStyle(color = PianoColors.TextMuted.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        TextStyle(color = PianoColors.TextMuted.copy(alpha = 0.7f), fontSize = 9.5.sp, fontWeight = FontWeight.Medium)
     }
     val beatNumberActiveStyle = remember {
         TextStyle(color = PianoColors.Background, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
@@ -109,16 +116,38 @@ fun StaffTimelineCanvas(
     val beatNumberInactiveStyle = remember {
         TextStyle(color = PianoColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
     }
+    val gutterBadgeTextStyle = remember {
+        TextStyle(color = PianoColors.Background, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
+    }
+    val handInSolidStyle = remember {
+        TextStyle(color = PianoColors.Background, fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold)
+    }
+    val handInHollowRightStyle = remember {
+        TextStyle(color = PianoColors.TargetBlue, fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold)
+    }
+    val handInHollowLeftStyle = remember {
+        TextStyle(color = PianoColors.LeftHandPurple, fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold)
+    }
+
     val beatActiveLayouts = remember(beatNumberActiveStyle) {
         (1..6).map { textMeasurer.measure(it.toString(), beatNumberActiveStyle) }
     }
     val beatInactiveLayouts = remember(beatNumberInactiveStyle) {
         (1..6).map { textMeasurer.measure(it.toString(), beatNumberInactiveStyle) }
     }
+    val trebleClefRegular = remember(clefStyle) { textMeasurer.measure("\uD834\uDD1E", clefStyle) }
+    val trebleClefGrand = remember(grandClefStyle) { textMeasurer.measure("\uD834\uDD1E", grandClefStyle) }
+    val gutterRightLayout = remember(gutterBadgeTextStyle) { textMeasurer.measure("R", gutterBadgeTextStyle) }
+    val gutterLeftLayout = remember(gutterBadgeTextStyle) { textMeasurer.measure("L", gutterBadgeTextStyle) }
+    val handSolidRight = remember(handInSolidStyle) { textMeasurer.measure("R", handInSolidStyle) }
+    val handSolidLeft = remember(handInSolidStyle) { textMeasurer.measure("L", handInSolidStyle) }
+    val handHollowRight = remember(handInHollowRightStyle) { textMeasurer.measure("R", handInHollowRightStyle) }
+    val handHollowLeft = remember(handInHollowLeftStyle) { textMeasurer.measure("L", handInHollowLeftStyle) }
 
     val evalByEventIndex = remember(evaluations) {
         evaluations.associateBy { it.noteEventIndex }
     }
+    val bassClefPath = remember { Path() }
 
     Canvas(
         modifier = modifier
@@ -132,14 +161,39 @@ fun StaffTimelineCanvas(
         val playheadX = width * 0.22f
         val pxPerBeat = max(58.dp.toPx(), width / 7.8f)
 
-        val f5Y = height * 0.34f
-        val staffSpan = height * 0.36f
-        val stepSpacing = staffSpan / 8f
+        val usesGrand = exercise.usesGrandStaff
+        val showRightStaff = exercise.usesRightHand
+        val showLeftStaff = exercise.usesLeftHand
 
-        fun stepToY(stepFromE4: Int): Float = f5Y + (8 - stepFromE4) * stepSpacing
+        val trebleTopY = if (usesGrand) height * 0.21f else height * 0.34f
+        val trebleSpan = if (usesGrand) height * 0.23f else height * 0.36f
+        val bassTopY = if (usesGrand) height * 0.56f else height * 0.34f
+        val bassSpan = if (usesGrand) height * 0.23f else height * 0.36f
+
+        val stepSpacing = (if (showRightStaff) trebleSpan else bassSpan) / 8f
+
+        fun trebleStepToY(stepFromE4: Int): Float = trebleTopY + (8 - stepFromE4) * (trebleSpan / 8f)
+        fun bassStepToY(stepFromG2: Int): Float = bassTopY + (8 - stepFromG2) * (bassSpan / 8f)
+        fun handMidiToY(hand: PianoHand, midi: Int): Float {
+            return if (hand == PianoHand.LEFT && showLeftStaff) {
+                bassStepToY(MidiUtils.bassStaffStepFromG2(midi))
+            } else {
+                trebleStepToY(MidiUtils.trebleStaffStepFromE4(midi))
+            }
+        }
+        fun handStep(hand: PianoHand, midi: Int): Int {
+            return if (hand == PianoHand.LEFT && showLeftStaff) {
+                MidiUtils.bassStaffStepFromG2(midi)
+            } else {
+                MidiUtils.trebleStaffStepFromE4(midi)
+            }
+        }
+
         fun beatToX(beat: Float): Float = playheadX + (beat - smoothBeat) * pxPerBeat
 
         val msPerBeat = 60_000.0 / bpm
+        val overallStaffTop = if (showRightStaff) trebleTopY else bassTopY
+        val overallStaffBottom = if (showLeftStaff) bassTopY + bassSpan else trebleTopY + trebleSpan
 
         // Beat flash subtle glow along playhead strip
         if (beatFlashAlpha > 0.01f) {
@@ -157,6 +211,7 @@ fun StaffTimelineCanvas(
 
         // Measure barlines and beat grid ticks
         val totalBeatsInt = ceil(exercise.totalBeats.toDouble()).toInt().coerceAtLeast(4)
+        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
         for (b in 0..totalBeatsInt) {
             val x = beatToX(b.toFloat())
             if (x < -40f || x > width + 40f) continue
@@ -164,41 +219,176 @@ fun StaffTimelineCanvas(
             if (isBarline) {
                 drawLine(
                     color = PianoColors.Border.copy(alpha = 0.9f),
-                    start = Offset(x, f5Y - stepSpacing * 0.4f),
-                    end = Offset(x, stepToY(0) + stepSpacing * 0.4f),
+                    start = Offset(x, overallStaffTop - stepSpacing * 0.4f),
+                    end = Offset(x, overallStaffBottom + stepSpacing * 0.4f),
                     strokeWidth = 1.6.dp.toPx()
                 )
             } else {
-                drawLine(
-                    color = PianoColors.Border.copy(alpha = 0.38f),
-                    start = Offset(x, f5Y),
-                    end = Offset(x, stepToY(0)),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
-                )
+                if (showRightStaff) {
+                    drawLine(
+                        color = PianoColors.Border.copy(alpha = 0.38f),
+                        start = Offset(x, trebleTopY),
+                        end = Offset(x, trebleTopY + trebleSpan),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = dashEffect
+                    )
+                }
+                if (showLeftStaff) {
+                    drawLine(
+                        color = PianoColors.Border.copy(alpha = 0.38f),
+                        start = Offset(x, bassTopY),
+                        end = Offset(x, bassTopY + bassSpan),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = dashEffect
+                    )
+                }
             }
         }
 
-        // 5 Treble Clef Staff Lines (steps 0, 2, 4, 6, 8)
-        for (lineStep in 0..8 step 2) {
-            val lineY = stepToY(lineStep)
+        // Grand Staff vertical connector bar on far left
+        if (usesGrand) {
+            val braceX = 6.dp.toPx()
             drawLine(
-                color = Color(0xFF394256),
-                start = Offset(0f, lineY),
-                end = Offset(width, lineY),
-                strokeWidth = 1.3.dp.toPx()
+                color = PianoColors.TextMuted.copy(alpha = 0.65f),
+                start = Offset(braceX, trebleTopY),
+                end = Offset(braceX, bassTopY + bassSpan),
+                strokeWidth = 2.4.dp.toPx()
             )
         }
 
-        // Treble Clef emblem on left gutter
-        val clefLayout = textMeasurer.measure("\uD834\uDD1E", clefStyle)
-        drawText(
-            textLayoutResult = clefLayout,
-            topLeft = Offset(12.dp.toPx(), f5Y - stepSpacing * 1.1f)
-        )
+        // 5 Treble Clef Staff Lines (when RH is active)
+        if (showRightStaff) {
+            for (lineStep in 0..8 step 2) {
+                val lineY = trebleStepToY(lineStep)
+                drawLine(
+                    color = Color(0xFF394256),
+                    start = Offset(0f, lineY),
+                    end = Offset(width, lineY),
+                    strokeWidth = 1.3.dp.toPx()
+                )
+            }
+            val clefLayout = if (usesGrand) trebleClefGrand else trebleClefRegular
+            val clefX = 11.dp.toPx()
+            drawText(
+                textLayoutResult = clefLayout,
+                topLeft = Offset(clefX, trebleTopY - stepSpacing * 1.15f)
+            )
+            // Explicit 'R' pill badge on treble clef gutter
+            val pillSize = 15.dp.toPx()
+            val badgeX = (clefX + clefLayout.size.width + 3.dp.toPx()).coerceAtMost(playheadX - pillSize - 4.dp.toPx())
+            val badgeY = trebleTopY + trebleSpan / 2f - pillSize / 2f
+            drawRoundRect(
+                color = PianoColors.TargetBlue,
+                topLeft = Offset(badgeX, badgeY),
+                size = Size(pillSize, pillSize),
+                cornerRadius = CornerRadius(4.dp.toPx())
+            )
+            drawText(
+                textLayoutResult = gutterRightLayout,
+                topLeft = Offset(
+                    badgeX + (pillSize - gutterRightLayout.size.width) / 2f,
+                    badgeY + (pillSize - gutterRightLayout.size.height) / 2f
+                )
+            )
+        }
 
-        val noteRadius = (stepSpacing * 0.90f).coerceIn(7.dp.toPx(), 13.dp.toPx())
-        val barHeight = (stepSpacing * 1.55f).coerceIn(13.dp.toPx(), 24.dp.toPx())
+        // 5 Bass Clef Staff Lines (when LH is active)
+        if (showLeftStaff) {
+            for (lineStep in 0..8 step 2) {
+                val lineY = bassStepToY(lineStep)
+                drawLine(
+                    color = Color(0xFF394256),
+                    start = Offset(0f, lineY),
+                    end = Offset(width, lineY),
+                    strokeWidth = 1.3.dp.toPx()
+                )
+            }
+            // Crisp vector F-clef anchored around F3 (step 6)
+            val bassStep = bassSpan / 8f
+            val f3Y = bassStepToY(6)
+            val clefLeft = 12.dp.toPx()
+            val arcRight = clefLeft + minOf(bassStep * 2.2f, 20.dp.toPx())
+            bassClefPath.reset()
+            bassClefPath.moveTo(clefLeft + bassStep * 0.4f, f3Y)
+            bassClefPath.cubicTo(
+                clefLeft + bassStep * 0.4f, f3Y - bassStep * 2.1f,
+                arcRight, f3Y - bassStep * 2.1f,
+                arcRight, f3Y + bassStep * 0.3f
+            )
+            bassClefPath.cubicTo(
+                arcRight, f3Y + bassStep * 2.4f,
+                clefLeft + bassStep * 0.6f, f3Y + bassStep * 3.4f,
+                clefLeft + bassStep * 0.1f, f3Y + bassStep * 3.8f
+            )
+            val clefColor = PianoColors.TextMuted.copy(alpha = 0.78f)
+            drawCircle(
+                color = clefColor,
+                radius = (bassStep * 0.55f).coerceAtLeast(2.5.dp.toPx()),
+                center = Offset(clefLeft + bassStep * 0.55f, f3Y)
+            )
+            drawPath(
+                path = bassClefPath,
+                color = clefColor,
+                style = Stroke(width = 2.1.dp.toPx(), cap = StrokeCap.Round)
+            )
+            val dotX = arcRight + 3.dp.toPx()
+            val dotRadius = (bassStep * 0.28f).coerceAtLeast(1.8.dp.toPx())
+            drawCircle(color = clefColor, radius = dotRadius, center = Offset(dotX, bassStepToY(7)))
+            drawCircle(color = clefColor, radius = dotRadius, center = Offset(dotX, bassStepToY(5)))
+
+            // Explicit 'L' pill badge on bass clef gutter
+            val pillSize = 15.dp.toPx()
+            val badgeX = (dotX + 3.dp.toPx()).coerceAtMost(playheadX - pillSize - stepSpacing - 4.dp.toPx())
+            val badgeY = bassTopY + bassSpan / 2f - pillSize / 2f
+            drawRoundRect(
+                color = PianoColors.LeftHandPurple,
+                topLeft = Offset(badgeX, badgeY),
+                size = Size(pillSize, pillSize),
+                cornerRadius = CornerRadius(4.dp.toPx())
+            )
+            drawText(
+                textLayoutResult = gutterLeftLayout,
+                topLeft = Offset(
+                    badgeX + (pillSize - gutterLeftLayout.size.width) / 2f,
+                    badgeY + (pillSize - gutterLeftLayout.size.height) / 2f
+                )
+            )
+        }
+
+        val noteRadius = (stepSpacing * 0.90f).coerceIn(6.5.dp.toPx(), 12.dp.toPx())
+        val barHeight = (stepSpacing * 1.55f).coerceIn(12.dp.toPx(), 22.dp.toPx())
+
+        // Draw subtle vertical connectors between simultaneous LH & RH notes
+        if (usesGrand) {
+            val beatSlots = HashMap<Int, Pair<Float?, Float?>>()
+            exercise.notes.forEach { note ->
+                val midi = note.midiNote ?: return@forEach
+                val xStart = beatToX(note.startBeat)
+                if (xStart < -120f || xStart > width + 120f) return@forEach
+                val slotKey = (note.startBeat * 100f).roundToInt()
+                val noteY = handMidiToY(note.hand, midi)
+                val existing = beatSlots[slotKey]
+                beatSlots[slotKey] = if (note.hand == PianoHand.RIGHT) {
+                    noteY to existing?.second
+                } else {
+                    existing?.first to noteY
+                }
+            }
+            beatSlots.forEach { (slotKey, pair) ->
+                val rhY = pair.first
+                val lhY = pair.second
+                if (rhY != null && lhY != null) {
+                    val x = beatToX(slotKey / 100f)
+                    drawLine(
+                        color = PianoColors.TextMuted.copy(alpha = 0.40f),
+                        start = Offset(x, minOf(rhY, lhY) + noteRadius),
+                        end = Offset(x, maxOf(rhY, lhY) - noteRadius),
+                        strokeWidth = 1.2.dp.toPx(),
+                        pathEffect = dashEffect
+                    )
+                }
+            }
+        }
 
         // Render Notes & Rests
         exercise.notes.forEachIndexed { eventIdx, note ->
@@ -210,7 +400,11 @@ fun StaffTimelineCanvas(
             val barWidth = (rawWidth - 6.dp.toPx()).coerceAtLeast(18.dp.toPx())
 
             if (note.isRest) {
-                val restY = stepToY(4) - barHeight * 0.42f
+                val restY = if (note.hand == PianoHand.LEFT && showLeftStaff) {
+                    bassStepToY(4) - barHeight * 0.42f
+                } else {
+                    trebleStepToY(4) - barHeight * 0.42f
+                }
                 drawRoundRect(
                     color = PianoColors.SurfaceElevated.copy(alpha = 0.85f),
                     topLeft = Offset(xStart, restY),
@@ -236,19 +430,48 @@ fun StaffTimelineCanvas(
             }
 
             val midi = note.midiNote ?: return@forEachIndexed
-            val step = MidiUtils.trebleStaffStepFromE4(midi)
-            val noteY = stepToY(step)
+            val step = handStep(note.hand, midi)
+            val noteY = handMidiToY(note.hand, midi)
             val eval = evalByEventIndex[eventIdx]
+            val handColor = if (note.hand == PianoHand.LEFT) PianoColors.LeftHandPurple else PianoColors.TargetBlue
 
-            // Ledger line for Middle C (C4) or lower
-            if (step <= -2) {
-                val c4Y = stepToY(-2)
-                drawLine(
-                    color = Color(0xFF56627A),
-                    start = Offset(xStart - noteRadius * 1.7f, c4Y),
-                    end = Offset(xStart + noteRadius * 1.7f, c4Y),
-                    strokeWidth = 1.5.dp.toPx()
-                )
+            // Ledger lines (Middle C on treble bottom/bass top, or extra ledger above/below)
+            if (note.hand == PianoHand.RIGHT) {
+                if (step <= -2) {
+                    val ledgerY = trebleStepToY(-2)
+                    drawLine(
+                        color = Color(0xFF56627A),
+                        start = Offset(xStart - noteRadius * 1.7f, ledgerY),
+                        end = Offset(xStart + noteRadius * 1.7f, ledgerY),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                } else if (step >= 10) {
+                    val ledgerY = trebleStepToY(10)
+                    drawLine(
+                        color = Color(0xFF56627A),
+                        start = Offset(xStart - noteRadius * 1.7f, ledgerY),
+                        end = Offset(xStart + noteRadius * 1.7f, ledgerY),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                }
+            } else if (showLeftStaff) {
+                if (step >= 10) {
+                    val ledgerY = bassStepToY(10)
+                    drawLine(
+                        color = Color(0xFF56627A),
+                        start = Offset(xStart - noteRadius * 1.7f, ledgerY),
+                        end = Offset(xStart + noteRadius * 1.7f, ledgerY),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                } else if (step <= -2) {
+                    val ledgerY = bassStepToY(-2)
+                    drawLine(
+                        color = Color(0xFF56627A),
+                        start = Offset(xStart - noteRadius * 1.7f, ledgerY),
+                        end = Offset(xStart + noteRadius * 1.7f, ledgerY),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                }
             }
 
             val isCurrentPreviewNote =
@@ -258,14 +481,14 @@ fun StaffTimelineCanvas(
 
             val targetBarTop = noteY - barHeight / 2f
             val baseFill = if (isCurrentPreviewNote) {
-                PianoColors.TargetBlue.copy(alpha = 0.48f)
+                handColor.copy(alpha = 0.48f)
             } else {
-                PianoColors.TargetBlue.copy(alpha = 0.17f)
+                handColor.copy(alpha = 0.17f)
             }
             val baseStroke = if (isCurrentPreviewNote) {
-                PianoColors.TargetBlue
+                handColor
             } else {
-                PianoColors.TargetBlue.copy(alpha = 0.52f)
+                handColor.copy(alpha = 0.52f)
             }
 
             // Target Proportional Duration Bar
@@ -311,7 +534,6 @@ fun StaffTimelineCanvas(
                     cornerRadius = CornerRadius(barHeight / 2f)
                 )
 
-                // Overflow tail when held past the end of the target duration bar
                 if (holdEndX > barRight + 2.dp.toPx()) {
                     drawRoundRect(
                         color = PianoColors.Coral.copy(alpha = 0.85f),
@@ -329,12 +551,12 @@ fun StaffTimelineCanvas(
                 eval?.timingVerdict == TimingVerdict.PERFECT -> PianoColors.Emerald
                 eval?.timingVerdict == TimingVerdict.TOO_SOON ||
                     eval?.timingVerdict == TimingVerdict.TOO_LATE -> PianoColors.Amber
-                isCurrentPreviewNote -> PianoColors.TargetBlue
+                isCurrentPreviewNote -> handColor
                 else -> PianoColors.TextPrimary
             }
 
-            if (note.durationBeats >= 2f) {
-                // Hollow half/whole notehead
+            val isHollow = note.durationBeats >= 2f
+            if (isHollow) {
                 drawCircle(
                     color = PianoColors.Surface,
                     radius = noteRadius,
@@ -344,16 +566,30 @@ fun StaffTimelineCanvas(
                     color = noteheadColor,
                     radius = noteRadius,
                     center = Offset(xStart, noteY),
-                    style = Stroke(width = 2.6.dp.toPx())
+                    style = Stroke(width = 2.4.dp.toPx())
                 )
             } else {
-                // Solid quarter/eighth notehead
                 drawCircle(
                     color = noteheadColor,
                     radius = noteRadius,
                     center = Offset(xStart, noteY)
                 )
             }
+
+            // Explicit R / L hand marker inside notehead
+            val handMarker = when {
+                isHollow && note.hand == PianoHand.RIGHT -> handHollowRight
+                isHollow && note.hand == PianoHand.LEFT -> handHollowLeft
+                note.hand == PianoHand.RIGHT -> handSolidRight
+                else -> handSolidLeft
+            }
+            drawText(
+                textLayoutResult = handMarker,
+                topLeft = Offset(
+                    xStart - handMarker.size.width / 2f,
+                    noteY - handMarker.size.height / 2f
+                )
+            )
 
             // Note pitch label
             val noteNameLayout = textMeasurer.measure(
@@ -364,7 +600,7 @@ fun StaffTimelineCanvas(
                 textLayoutResult = noteNameLayout,
                 topLeft = Offset(
                     xStart - noteNameLayout.size.width / 2f,
-                    noteY + noteRadius + 3.dp.toPx()
+                    noteY + noteRadius + 2.dp.toPx()
                 )
             )
 
@@ -385,7 +621,14 @@ fun StaffTimelineCanvas(
                 val padY = 4.dp.toPx()
                 val pillW = badgeMeasured.size.width + padX * 2f
                 val pillH = badgeMeasured.size.height + padY * 2f
-                val rowY = if (eval.targetIndex % 2 == 0) height * 0.05f else height * 0.16f
+                val rowY = when {
+                    usesGrand && note.hand == PianoHand.LEFT ->
+                        if (eval.targetIndex % 2 == 0) height * 0.84f else height * 0.91f
+                    usesGrand ->
+                        if (eval.targetIndex % 2 == 0) height * 0.03f else height * 0.105f
+                    else ->
+                        if (eval.targetIndex % 2 == 0) height * 0.05f else height * 0.16f
+                }
                 val pillX = (xStart + minOf(barWidth * 0.35f, 30.dp.toPx()) - pillW / 2f)
                     .coerceAtMost((width - pillW - 6.dp.toPx()).coerceAtLeast(6.dp.toPx()))
 

@@ -16,11 +16,13 @@ import dev.lofrancolabs.pianopiano.domain.XpReward
 import dev.lofrancolabs.pianopiano.model.BeginnerDifficulty
 import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.ExerciseSummary
+import dev.lofrancolabs.pianopiano.model.HandMode
 import dev.lofrancolabs.pianopiano.model.MicSensitivity
 import dev.lofrancolabs.pianopiano.model.MicSourceMode
 import dev.lofrancolabs.pianopiano.model.MidiUtils
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
 import dev.lofrancolabs.pianopiano.model.NoteNamingSystem
+import dev.lofrancolabs.pianopiano.model.PianoHand
 import dev.lofrancolabs.pianopiano.model.SessionPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +47,7 @@ data class PianoPianoUiState(
     val bpm: Int = selectedExercise.defaultBpm,
     val noteNaming: NoteNamingSystem = NoteNamingSystem.ENGLISH,
     val randomDifficulty: BeginnerDifficulty = BeginnerDifficulty.BEGINNER,
+    val handMode: HandMode = HandMode.RIGHT_HAND,
     val micSensitivity: MicSensitivity = MicSensitivity.NORMAL,
     val micSourceMode: MicSourceMode = MicSourceMode.RAW,
     val playerProgress: PlayerProgress = PlayerProgress(),
@@ -56,10 +59,14 @@ data class PianoPianoUiState(
     val beatFlashAlpha: Float = 0f,
     val micLevel: Float = 0f,
     val heardMidi: Int? = null,
+    val heardMidis: Set<Int> = emptySet(),
     val audioMonitor: AudioMonitorSnapshot = AudioMonitorSnapshot(),
     val recentDetectedNotes: List<DetectedNoteEvent> = emptyList(),
     val previewActiveMidi: Int? = null,
+    val previewActiveMidis: Set<Int> = emptySet(),
     val expectedTargetMidi: Int? = selectedExercise.notes.firstOrNull { !it.isRest }?.midiNote,
+    val expectedRightMidi: Int? = selectedExercise.notes.firstOrNull { !it.isRest && it.hand == PianoHand.RIGHT }?.midiNote,
+    val expectedLeftMidi: Int? = selectedExercise.notes.firstOrNull { !it.isRest && it.hand == PianoHand.LEFT }?.midiNote,
     val calibratedNoiseFloor: Float = 0.002f,
     val statusMessage: String? = null,
     val evaluations: List<NoteEvaluation> = emptyList(),
@@ -72,25 +79,43 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     private val _uiState = MutableStateFlow(loadInitialState())
     val uiState: StateFlow<PianoPianoUiState> = _uiState.asStateFlow()
 
+    private fun initialExpectedTargets(exercise: Exercise): Pair<Int?, Int?> {
+        val firstPlayable = exercise.notes.firstOrNull { !it.isRest }
+        val lookaheadEnd = (firstPlayable?.startBeat ?: 0f) + exercise.beatsPerBar
+        val firstRight = exercise.notes.firstOrNull {
+            !it.isRest && it.hand == PianoHand.RIGHT && it.startBeat < lookaheadEnd
+        }?.midiNote
+        val firstLeft = exercise.notes.firstOrNull {
+            !it.isRest && it.hand == PianoHand.LEFT && it.startBeat < lookaheadEnd
+        }?.midiNote
+        return firstRight to firstLeft
+    }
+
     private fun loadInitialState(): PianoPianoUiState {
         val naming = prefs.loadNoteNaming()
         val difficulty = prefs.loadRandomDifficulty()
+        val handMode = prefs.loadHandMode()
         val sensitivity = prefs.loadMicSensitivity()
         val sourceMode = prefs.loadMicSourceMode()
         val progress = prefs.loadProgress()
         val initialExercise = ExerciseGenerator.generate(
             difficulty = difficulty,
+            handMode = handMode,
             sequenceNumber = prefs.nextRandomSequence()
         )
+        val (firstRight, firstLeft) = initialExpectedTargets(initialExercise)
         return PianoPianoUiState(
             selectedExercise = initialExercise,
             bpm = initialExercise.defaultBpm,
             noteNaming = naming,
             randomDifficulty = difficulty,
+            handMode = handMode,
             micSensitivity = sensitivity,
             micSourceMode = sourceMode,
             playerProgress = progress,
-            expectedTargetMidi = initialExercise.notes.firstOrNull { !it.isRest }?.midiNote
+            expectedTargetMidi = firstRight ?: firstLeft,
+            expectedRightMidi = firstRight,
+            expectedLeftMidi = firstLeft
         )
     }
 
@@ -105,6 +130,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     init {
         captureEngine.setSensitivity(_uiState.value.micSensitivity)
         captureEngine.setSourceMode(_uiState.value.micSourceMode)
+        captureEngine.setPolyphonicMode(_uiState.value.selectedExercise.hasSimultaneousNotes)
     }
 
     @Volatile
@@ -151,20 +177,47 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun selectDifficulty(difficulty: BeginnerDifficulty, autoStart: Boolean = false) {
-        stopActiveSession(keepSummary = false)
+        val targetHandMode = if (difficulty == BeginnerDifficulty.ADVANCED &&
+            _uiState.value.handMode == HandMode.RIGHT_HAND
+        ) {
+            prefs.saveHandMode(HandMode.BOTH_TOGETHER)
+            HandMode.BOTH_TOGETHER
+        } else {
+            _uiState.value.handMode
+        }
         prefs.saveRandomDifficulty(difficulty)
+        generateAndApplyExercise(difficulty, targetHandMode, autoStart)
+    }
+
+    fun selectHandMode(mode: HandMode, autoStart: Boolean = false) {
+        prefs.saveHandMode(mode)
+        generateAndApplyExercise(_uiState.value.randomDifficulty, mode, autoStart)
+    }
+
+    private fun generateAndApplyExercise(
+        difficulty: BeginnerDifficulty,
+        handMode: HandMode,
+        autoStart: Boolean
+    ) {
+        stopActiveSession(keepSummary = false)
         val generated = ExerciseGenerator.generate(
             difficulty = difficulty,
+            handMode = handMode,
             sequenceNumber = prefs.nextRandomSequence()
         )
+        captureEngine.setPolyphonicMode(generated.hasSimultaneousNotes)
+        val (firstRight, firstLeft) = initialExpectedTargets(generated)
         _uiState.update {
             it.copy(
                 randomDifficulty = difficulty,
+                handMode = handMode,
                 selectedExercise = generated,
                 bpm = generated.defaultBpm,
                 beatPosition = 0f,
                 evaluations = emptyList(),
-                expectedTargetMidi = generated.notes.firstOrNull { n -> !n.isRest }?.midiNote,
+                expectedTargetMidi = firstRight ?: firstLeft,
+                expectedRightMidi = firstRight,
+                expectedLeftMidi = firstLeft,
                 summary = null,
                 lastXpReward = null,
                 statusMessage = null
@@ -176,7 +229,8 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun nextExercise(autoStart: Boolean = true) {
-        selectDifficulty(_uiState.value.randomDifficulty, autoStart = autoStart)
+        val state = _uiState.value
+        generateAndApplyExercise(state.randomDifficulty, state.handMode, autoStart)
     }
 
     private fun startPracticeIfReady() {
@@ -287,12 +341,15 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                         }
                     }
 
-                    var currentTarget: Int? = null
+                    val activeMidisThisTick = mutableSetOf<Int>()
+                    var previewRight: Int? = null
+                    var previewLeft: Int? = null
                     exercise.notes.forEachIndexed { idx, note ->
                         val midi = note.midiNote ?: return@forEachIndexed
                         val noteEnd = note.startBeat + note.durationBeats
                         if (beatPos >= note.startBeat && beatPos < noteEnd) {
-                            currentTarget = midi
+                            activeMidisThisTick.add(midi)
+                            if (note.hand == PianoHand.RIGHT) previewRight = midi else previewLeft = midi
                             if (activeNoteIndices.add(idx)) {
                                 synthesizer.noteOn(midi)
                             }
@@ -308,8 +365,11 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                         it.copy(
                             beatPosition = beatPos,
                             beatFlashAlpha = flash,
-                            previewActiveMidi = currentTarget,
-                            expectedTargetMidi = currentTarget
+                            previewActiveMidi = previewRight ?: previewLeft,
+                            previewActiveMidis = activeMidisThisTick.toSet(),
+                            expectedTargetMidi = previewRight ?: previewLeft,
+                            expectedRightMidi = previewRight,
+                            expectedLeftMidi = previewLeft
                         )
                     }
 
@@ -320,13 +380,17 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                 }
             } finally {
                 synthesizer.stop()
+                val (firstRight, firstLeft) = initialExpectedTargets(exercise)
                 _uiState.update {
                     it.copy(
                         phase = SessionPhase.IDLE,
                         beatPosition = 0f,
                         beatFlashAlpha = 0f,
                         previewActiveMidi = null,
-                        expectedTargetMidi = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote,
+                        previewActiveMidis = emptySet(),
+                        expectedTargetMidi = firstRight ?: firstLeft,
+                        expectedRightMidi = firstRight,
+                        expectedLeftMidi = firstLeft,
                         statusMessage = null
                     )
                 }
@@ -356,8 +420,10 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         val bpm = state.bpm
         val msPerBeat = 60_000.0 / bpm
         val countInBeats = 4
-        val firstNoteLabel = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote
+        val (firstRight, firstLeft) = initialExpectedTargets(exercise)
+        val firstNoteLabel = (firstRight ?: firstLeft)
             ?.let { m -> MidiUtils.midiToName(m, state.noteNaming) } ?: "first note"
+        captureEngine.setPolyphonicMode(exercise.hasSimultaneousNotes)
         _uiState.update {
             it.copy(
                 phase = SessionPhase.COUNT_IN,
@@ -366,7 +432,9 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                 evaluations = emptyList(),
                 summary = null,
                 lastXpReward = null,
-                expectedTargetMidi = exercise.notes.firstOrNull { n -> !n.isRest }?.midiNote,
+                expectedTargetMidi = firstRight ?: firstLeft,
+                expectedRightMidi = firstRight,
+                expectedLeftMidi = firstLeft,
                 statusMessage = "Count-in: get ready on $firstNoteLabel"
             )
         }
@@ -443,6 +511,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                         judge.tick(now)
                         val beatFrac = (beatPos - floor(beatPos)).coerceIn(0f, 1f)
                         val flash = if (beatFrac < 0.25f) 1f - (beatFrac / 0.25f) else 0f
+                        val (rightTarget, leftTarget) = judge.currentTargetMidis(now)
 
                         _uiState.update {
                             it.copy(
@@ -451,7 +520,9 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
                                 countInBeat = 0,
                                 beatFlashAlpha = flash,
                                 evaluations = judge.snapshot(),
-                                expectedTargetMidi = judge.currentTargetMidi(now),
+                                expectedTargetMidi = rightTarget ?: leftTarget,
+                                expectedRightMidi = rightTarget,
+                                expectedLeftMidi = leftTarget,
                                 statusMessage = null
                             )
                         }
@@ -506,13 +577,17 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
         judgeAcceptWindowStartMs = Long.MAX_VALUE
         synthesizer.stop()
         _uiState.update { state ->
+            val (firstRight, firstLeft) = initialExpectedTargets(state.selectedExercise)
             state.copy(
                 phase = SessionPhase.IDLE,
                 beatPosition = 0f,
                 countInBeat = 0,
                 beatFlashAlpha = 0f,
                 previewActiveMidi = null,
-                expectedTargetMidi = state.selectedExercise.notes.firstOrNull { n -> !n.isRest }?.midiNote,
+                previewActiveMidis = emptySet(),
+                expectedTargetMidi = firstRight ?: firstLeft,
+                expectedRightMidi = firstRight,
+                expectedLeftMidi = firstLeft,
                 summary = if (keepSummary) state.summary else null
             )
         }
@@ -523,14 +598,17 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun dismissSummary() {
-        _uiState.update {
-            it.copy(
+        _uiState.update { state ->
+            val (firstRight, firstLeft) = initialExpectedTargets(state.selectedExercise)
+            state.copy(
                 phase = SessionPhase.IDLE,
                 beatPosition = 0f,
                 summary = null,
                 lastXpReward = null,
                 evaluations = emptyList(),
-                expectedTargetMidi = it.selectedExercise.notes.firstOrNull { n -> !n.isRest }?.midiNote
+                expectedTargetMidi = firstRight ?: firstLeft,
+                expectedRightMidi = firstRight,
+                expectedLeftMidi = firstLeft
             )
         }
     }
@@ -566,6 +644,7 @@ class PianoPianoViewModel(application: Application) : AndroidViewModel(applicati
             it.copy(
                 micLevel = normalizedLevel,
                 heardMidi = snapshot.liveMidi,
+                heardMidis = snapshot.liveMidis,
                 audioMonitor = snapshot
             )
         }

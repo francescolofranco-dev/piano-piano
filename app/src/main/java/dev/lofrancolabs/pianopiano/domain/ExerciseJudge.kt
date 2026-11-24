@@ -4,6 +4,7 @@ import dev.lofrancolabs.pianopiano.model.DurationVerdict
 import dev.lofrancolabs.pianopiano.model.Exercise
 import dev.lofrancolabs.pianopiano.model.ExerciseSummary
 import dev.lofrancolabs.pianopiano.model.NoteEvaluation
+import dev.lofrancolabs.pianopiano.model.PianoHand
 import dev.lofrancolabs.pianopiano.model.PitchVerdict
 import dev.lofrancolabs.pianopiano.model.TimingVerdict
 import kotlin.math.abs
@@ -35,7 +36,8 @@ class ExerciseJudge(
                         noteEventIndex = eventIndex,
                         expectedMidi = midi,
                         expectedStartMs = startMs,
-                        expectedEndMs = endMs
+                        expectedEndMs = endMs,
+                        hand = note.hand
                     )
                 )
             }
@@ -46,27 +48,41 @@ class ExerciseJudge(
     fun snapshot(): List<NoteEvaluation> = evaluations.toList()
 
     @Synchronized
-    fun currentTargetMidi(nowMs: Long): Int? {
-        val nextPending = evaluations.firstOrNull { it.timingVerdict == TimingVerdict.PENDING }
-        if (nextPending != null && nowMs <= nextPending.expectedEndMs) {
-            return nextPending.expectedMidi
+    fun currentTargetMidis(nowMs: Long): Pair<Int?, Int?> {
+        val earliestPendingMs = evaluations.firstOrNull { it.timingVerdict == TimingVerdict.PENDING }?.expectedStartMs
+        val lookaheadLimitMs = earliestPendingMs?.let { it + msPerBeat.roundToLong() } ?: Long.MAX_VALUE
+
+        fun targetForHand(hand: PianoHand): Int? {
+            val nextPending = evaluations.firstOrNull {
+                it.hand == hand &&
+                    it.timingVerdict == TimingVerdict.PENDING &&
+                    nowMs <= it.expectedEndMs &&
+                    it.expectedStartMs <= lookaheadLimitMs
+            }
+            if (nextPending != null) return nextPending.expectedMidi
+            return evaluations.lastOrNull {
+                it.hand == hand && it.activeHoldStartMs != null && it.activeHoldEndMs == null
+            }?.expectedMidi
         }
-        return evaluations.lastOrNull { it.activeHoldStartMs != null && it.activeHoldEndMs == null }?.expectedMidi
+
+        return targetForHand(PianoHand.RIGHT) to targetForHand(PianoHand.LEFT)
+    }
+
+    @Synchronized
+    fun currentTargetMidi(nowMs: Long): Int? {
+        val (right, left) = currentTargetMidis(nowMs)
+        return right ?: left
     }
 
     @Synchronized
     fun onNoteOn(midi: Int, timestampMs: Long) {
-        // Close any still-held previous note when a new note starts
-        for (i in evaluations.indices) {
-            val active = evaluations[i]
-            if (active.activeHoldStartMs != null && active.activeHoldEndMs == null) {
-                evaluations[i] = closeHold(active, timestampMs)
-            }
-        }
+        // Priority 1: exact pitch match among pending targets whose window contains timestampMs
+        var bestExactIndex = -1
+        var bestExactDelta = Long.MAX_VALUE
+        var bestFallbackIndex = -1
+        var bestFallbackDelta = Long.MAX_VALUE
+        val preferredHand = if (midi < 60) PianoHand.LEFT else PianoHand.RIGHT
 
-        // Find the closest pending target note whose window contains timestampMs
-        var bestIndex = -1
-        var bestAbsDelta = Long.MAX_VALUE
         for (i in evaluations.indices) {
             val eval = evaluations[i]
             if (eval.timingVerdict != TimingVerdict.PENDING) continue
@@ -74,24 +90,49 @@ class ExerciseJudge(
             val windowEnd = eval.expectedEndMs
             if (timestampMs in windowStart..windowEnd) {
                 val dist = abs(timestampMs - eval.expectedStartMs)
-                if (dist < bestAbsDelta) {
-                    bestAbsDelta = dist
-                    bestIndex = i
+                if (eval.expectedMidi == midi && dist < bestExactDelta) {
+                    bestExactDelta = dist
+                    bestExactIndex = i
+                }
+                if (bestFallbackIndex == -1 ||
+                    dist < bestFallbackDelta - SIMULTANEOUS_TOLERANCE_MS ||
+                    (abs(dist - bestFallbackDelta) <= SIMULTANEOUS_TOLERANCE_MS &&
+                        eval.hand == preferredHand &&
+                        evaluations[bestFallbackIndex].hand != preferredHand)
+                ) {
+                    bestFallbackDelta = dist
+                    bestFallbackIndex = i
                 }
             }
         }
 
+        val bestIndex = if (bestExactIndex != -1) bestExactIndex else bestFallbackIndex
         if (bestIndex == -1) return
 
-        // Any earlier pending targets that were skipped become MISSED
+        val target = evaluations[bestIndex]
+
+        // Close any still-held note on the same hand (or same MIDI), preserving simultaneous other-hand holds
+        for (i in evaluations.indices) {
+            val active = evaluations[i]
+            if (active.activeHoldStartMs != null &&
+                active.activeHoldEndMs == null &&
+                (active.hand == target.hand || active.playedMidi == midi)
+            ) {
+                evaluations[i] = closeHold(active, timestampMs)
+            }
+        }
+
+        // Only mark strictly earlier pending targets MISSED (never simultaneous partner hand notes)
         for (i in 0 until bestIndex) {
             val earlier = evaluations[i]
-            if (earlier.timingVerdict == TimingVerdict.PENDING) {
+            if (earlier.timingVerdict == TimingVerdict.PENDING &&
+                earlier.expectedStartMs < target.expectedStartMs - SIMULTANEOUS_TOLERANCE_MS &&
+                (earlier.hand == target.hand || earlier.expectedEndMs <= timestampMs)
+            ) {
                 evaluations[i] = earlier.copy(timingVerdict = TimingVerdict.MISSED)
             }
         }
 
-        val target = evaluations[bestIndex]
         val deltaMs = timestampMs - target.expectedStartMs
         val pitchVerdict = if (midi == target.expectedMidi) PitchVerdict.CORRECT else PitchVerdict.WRONG_KEY
         val timingVerdict = when {
@@ -190,6 +231,7 @@ class ExerciseJudge(
 
     companion object {
         const val DEFAULT_TIMING_TOLERANCE_MS = 65L
+        const val SIMULTANEOUS_TOLERANCE_MS = 40L
         const val MIN_DURATION_RATIO = 0.70
         const val MAX_DURATION_RATIO = 1.30
     }
